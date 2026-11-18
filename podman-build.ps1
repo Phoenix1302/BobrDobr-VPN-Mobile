@@ -47,12 +47,21 @@ if ($ForceRebuildNative -or $env:FORCE_REBUILD_NATIVE -eq "1") {
     Write-Host ">>> Force rebuild native libraries enabled (FORCE_REBUILD_NATIVE=1)" -ForegroundColor Yellow
 }
 
-podman run --rm $ttyFlag `
-    @envArgs `
-    -v "${ScriptDir}:/workspace:z" `
-    -w /workspace `
-    $ImageName `
-    bash -c $execCommand
+if ($Command) {
+    podman run --rm $ttyFlag `
+        @envArgs `
+        -v "${ScriptDir}:/workspace:z" `
+        -w /workspace `
+        $ImageName `
+        bash -c "$Command"
+} else {
+    podman run --rm $ttyFlag `
+        @envArgs `
+        -v "${ScriptDir}:/workspace:z" `
+        -w /workspace `
+        $ImageName `
+        bash /workspace/build-container/build.sh $Task
+}
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ">>> Build completed successfully in Podman!" -ForegroundColor Green
