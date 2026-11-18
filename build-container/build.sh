@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=================================================="
+echo "  BobrDobr VPN Mobile Client - Podman Build System "
+echo "=================================================="
+
+echo ">>> Toolchain Diagnostics:"
+echo "Rust version:    $(rustc --version 2>/dev/null || echo 'not found')"
+echo "Cargo-NDK:       $(cargo-ndk --version 2>/dev/null || echo 'installed')"
+echo "Go version:      $(go version 2>/dev/null || echo 'not found')"
+echo "Java version:    $(java -version 2>&1 | head -n 1)"
+echo "Gradle version:  $(gradle --version 2>&1 | grep '^Gradle ' || echo 'wrapper-only')"
+echo "Android SDK:     ${ANDROID_HOME:-/opt/android-sdk}"
+echo "Android NDK:     ${ANDROID_NDK_HOME:-not set}"
+
+cd /workspace
+
+# Clean up stale locks from previous container runs if any
+find /workspace/.gradle -name "*.lock" -delete 2>/dev/null || true
+
+# If native Rust libraries are missing or rebuild requested, build them
+if [ -f "engine-rust/build-rust.sh" ]; then
+    if [ ! -f "engine-rust/src/main/jniLibs/arm64-v8a/libengine_rust.so" ] || [ "${FORCE_REBUILD_NATIVE:-0}" = "1" ]; then
+        echo ">>> Building Rust native engine libraries..."
+        chmod +x engine-rust/build-rust.sh
+        bash engine-rust/build-rust.sh
+    fi
+fi
+
+# If native Go libraries are missing or rebuild requested, build them
+if [ -f "engine-go/build-go.sh" ]; then
+    if [ ! -f "engine-go/src/main/jniLibs/arm64-v8a/libengine_go.so" ] || [ "${FORCE_REBUILD_NATIVE:-0}" = "1" ]; then
+        echo ">>> Building Go native engine libraries..."
+        chmod +x engine-go/build-go.sh
+        bash engine-go/build-go.sh
+    fi
+fi
+
+# If wrapper jar is missing, bootstrap it using installed Gradle
+if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+    echo ">>> Initializing Gradle wrapper..."
+    if command -v gradle >/dev/null 2>&1; then
+        gradle wrapper --gradle-version 8.8 --distribution-type bin
+    fi
+fi
+
+if [ -f "gradlew" ]; then
+    chmod +x gradlew
+    TARGET_TASK="${*:-assembleDebug}"
+    echo ">>> Executing: ./gradlew ${TARGET_TASK} --project-cache-dir /tmp/gradle-cache --no-daemon --no-parallel --stacktrace"
+    ./gradlew ${TARGET_TASK} --project-cache-dir /tmp/gradle-cache --no-daemon --no-parallel --stacktrace
+
+    for apk in app/build/outputs/apk/release/*.apk app/build/outputs/apk/debug/*.apk; do
+        if [ -f "$apk" ] && [ -f "build-container/verify-apk-alignment.sh" ]; then
+            chmod +x build-container/verify-apk-alignment.sh
+            bash build-container/verify-apk-alignment.sh "$apk"
+            break
+        fi
+    done
+else
+    echo "ERROR: gradlew script not found in /workspace"
+    exit 1
+fi
+
+echo "=================================================="
+echo "  Build process completed successfully!           "
+echo "=================================================="

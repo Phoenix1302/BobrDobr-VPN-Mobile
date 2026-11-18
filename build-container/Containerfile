@@ -1,0 +1,51 @@
+# Containerfile for building BobrDobr VPN Android Client
+# Includes: Android SDK 34, NDK r26c, Rust (cargo-ndk), Go 1.24+, Gradle 8.8
+
+FROM docker.io/library/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/26.2.11394342
+ENV PATH=${PATH}:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/gradle/bin
+
+# 1. Base tools and dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget git unzip xz-utils zip \
+    build-essential pkg-config clang llvm cmake ninja-build \
+    openjdk-17-jdk-headless \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Install Go 1.24
+ENV GO_VERSION=1.24.0
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o go.tar.gz \
+    && tar -C /usr/local -xzf go.tar.gz \
+    && rm go.tar.gz
+
+# 3. Install Rust & Cargo-NDK
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable \
+    && . /root/.cargo/env \
+    && rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android \
+    && cargo install cargo-ndk
+
+# 4. Install Android Command Line Tools & SDK
+ENV ANDROID_CMDLINE_TOOLS_VERSION=11076708
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
+    && curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_VERSION}_latest.zip" -o cmdline-tools.zip \
+    && unzip -q cmdline-tools.zip -d ${ANDROID_HOME}/cmdline-tools \
+    && mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
+    && rm cmdline-tools.zip
+
+# 5. Accept licenses and install SDK platforms, build-tools, NDK, and CMake
+RUN yes | sdkmanager --licenses > /dev/null \
+    && sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" "ndk;26.2.11394342" "cmake;3.22.1"
+
+# 6. Install Gradle 8.8
+ENV GRADLE_VERSION=8.8
+RUN curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o gradle.zip \
+    && unzip -q gradle.zip -d /opt \
+    && ln -s /opt/gradle-${GRADLE_VERSION}/bin/gradle /usr/local/bin/gradle \
+    && rm gradle.zip
+
+WORKDIR /workspace
+CMD ["/bin/bash"]

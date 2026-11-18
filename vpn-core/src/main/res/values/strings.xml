@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="vpn_service_description">БобрДобр VPN: Защищенный туннель плотины</string>
+    <string name="vpn_channel_name">БобрДобр VPN - Статус плотины</string>
+    <string name="vpn_channel_desc">Постоянное уведомление о статусе защищенного соединения VPN</string>
+    
+    <string name="vpn_status_disconnected">Шлюзы открыты (Отключено)</string>
+    <string name="vpn_status_connecting">Возведение плотины… (Подключение к %1$s)</string>
+    <string name="vpn_status_connected">Плотина под надежной защитой! (%1$s)</string>
+    <string name="vpn_status_disconnecting">Открытие шлюзов… (Отключение)</string>
+    <string name="vpn_status_reconnecting">Укрепление плотины… (Повторное подключение к %1$s)</string>
+    <string name="vpn_status_error">Прорыв плотины! Ошибка: %1$s</string>
+    
+    <string name="vpn_action_disconnect">ОТКЛЮЧИТЬ</string>
+    <string name="vpn_action_reconnect">ПОВТОРИТЬ</string>
+</resources>

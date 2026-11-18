@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">БобрДобр VPN</string>
+    <string name="quick_settings_tile_label">БобрДобр VPN</string>
+    <string name="quick_settings_tile_subtitle">Защита плотины</string>
+</resources>

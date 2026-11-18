@@ -1,0 +1,152 @@
+package com.bobrdobr.vpn.service
+
+import android.content.Intent
+import android.net.VpnService
+import android.os.Build
+import android.service.quicksettings.Tile
+import android.service.quicksettings.TileService
+import androidx.annotation.RequiresApi
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import org.bobrdobr.vpn.core.model.VpnState
+import org.bobrdobr.vpn.core.service.VpnTunnelService
+import com.bobrdobr.vpn.MainActivity
+import com.bobrdobr.vpn.ui.model.ServerProfile
+
+/**
+ * QuickSettings Tile allowing one-tap BobrDobr VPN toggle from the Android notification shade.
+ */
+@RequiresApi(Build.VERSION_CODES.N)
+class VpnTileService : TileService() {
+
+    private var serviceScope: CoroutineScope? = null
+    private var stateJob: Job? = null
+
+    override fun onStartListening() {
+        super.onStartListening()
+        serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+        stateJob = serviceScope?.launch {
+            VpnTunnelService.vpnState.collectLatest { state ->
+                updateTileState(state)
+            }
+        }
+    }
+
+    override fun onStopListening() {
+        super.onStopListening()
+        stateJob?.cancel()
+        serviceScope?.cancel()
+        serviceScope = null
+    }
+
+    override fun onClick() {
+        super.onClick()
+        val tile = qsTile ?: return
+
+        val currentState = VpnTunnelService.vpnState.value
+        when (currentState) {
+            is VpnState.Connected, is VpnState.Connecting, is VpnState.Reconnecting -> {
+                // Turn off VPN
+                VpnTunnelService.stop(this)
+            }
+            is VpnState.Disconnected, is VpnState.Error -> {
+                // Check if VpnService permissions are already granted
+                val prepareIntent = VpnService.prepare(this)
+                if (prepareIntent != null) {
+                    // Requires user prompt in Activity
+                    val appIntent = Intent(this, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        val pendingIntent = android.app.PendingIntent.getActivity(
+                            this,
+                            0,
+                            appIntent,
+                            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                        )
+                        startActivityAndCollapse(pendingIntent)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        startActivityAndCollapse(appIntent)
+                    }
+                } else {
+                    // Permission already granted -> connect to first available server or open app if none configured
+                    val repo = com.bobrdobr.vpn.repository.ServerRepository.getInstance(this)
+                    val targetServer = repo.allServers.value.firstOrNull()
+                    if (targetServer != null) {
+                        VpnTunnelService.start(this, targetServer.toTunnelConfig())
+                    } else {
+                        val appIntent = Intent(this, MainActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            val pendingIntent = android.app.PendingIntent.getActivity(
+                                this,
+                                0,
+                                appIntent,
+                                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                            )
+                            startActivityAndCollapse(pendingIntent)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            startActivityAndCollapse(appIntent)
+                        }
+                    }
+                }
+            }
+            is VpnState.Disconnecting -> {
+                // In teardown
+            }
+        }
+    }
+
+    private fun updateTileState(state: VpnState) {
+        val tile = qsTile ?: return
+
+        when (state) {
+            is VpnState.Connected -> {
+                tile.state = Tile.STATE_ACTIVE
+                tile.label = "БобрДобр: Защищен"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = state.protocol.displayName
+                }
+            }
+            is VpnState.Connecting, is VpnState.Reconnecting -> {
+                tile.state = Tile.STATE_UNAVAILABLE
+                tile.label = "БобрДобр: Связь..."
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = "Возведение плотины"
+                }
+            }
+            is VpnState.Disconnecting -> {
+                tile.state = Tile.STATE_UNAVAILABLE
+                tile.label = "БобрДобр: Открытие..."
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = "Завершение сессии"
+                }
+            }
+            is VpnState.Error -> {
+                tile.state = Tile.STATE_INACTIVE
+                tile.label = "БобрДобр: Сбой"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = "Прорыв плотины"
+                }
+            }
+            VpnState.Disconnected -> {
+                tile.state = Tile.STATE_INACTIVE
+                tile.label = "БобрДобр: Отключен"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = "Шлюзы открыты"
+                }
+            }
+        }
+
+        tile.updateTile()
+    }
+}

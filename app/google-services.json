@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "887146201799",
+    "project_id": "bobrdobr-1f991",
+    "storage_bucket": "bobrdobr-1f991.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:887146201799:android:f3fc8b933cb5b51e23b4e2",
+        "android_client_info": {
+          "package_name": "com.bobrdobr.vpn"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBobrDobrClientKeyForGoogleServices"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:887146201799:android:f3fc8b933cb5b51e23b4e2",
+        "android_client_info": {
+          "package_name": "com.bobrdobr.vpn.debug"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBobrDobrClientKeyForGoogleServices"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

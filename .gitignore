@@ -1,0 +1,34 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+
+# Module build directories
+**/build/
+**/target/
+
+# Go binaries
+**/engine-go/bin/
+
+# Keystores & Service Accounts
+*.jks
+*.keystore
+*firebase-adminsdk*.json
+*adminsdk*.json
+service-account*.json
+*.json
+!app/google-services.json
+
+# Logs & Temporary files
+*.log
+*.swp
+*.bak
+*~
