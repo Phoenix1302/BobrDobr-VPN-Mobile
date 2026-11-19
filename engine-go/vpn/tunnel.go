@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -28,12 +29,18 @@ func init() {
 }
 
 func initTunnelParams() {
-	cstpReqHeaders["Cookie"] = "webvpn=" + session.Sess.SessionToken
+	sessionToken := session.Sess.SessionToken
+	if sessionToken == "" && auth.WebVpnCookie != "" {
+		sessionToken = auth.WebVpnCookie
+		session.Sess.SessionToken = sessionToken
+	}
+	cstpReqHeaders["Cookie"] = "webvpn=" + sessionToken
 	cstpReqHeaders["X-CSTP-Local-VPNAddress-IP4"] = base.LocalInterface.Ip4
 
 	session.Sess.PreMasterSecret, _ = utils.MakeMasterSecret()
 	cstpReqHeaders["X-DTLS-Master-Secret"] = hex.EncodeToString(session.Sess.PreMasterSecret)
 	cstpReqHeaders["X-DTLS12-CipherSuite"] = "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:AES128-GCM-SHA256"
+	base.Debug("CSTP init params: Cookie=webvpn=" + sessionToken)
 }
 
 // SetupTunnel executes AnyConnect HTTP CONNECT command to establish CSTP and DTLS channels
@@ -41,17 +48,19 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 	initTunnelParams()
 
 	connectUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel"
-	if auth.Prof.SecretKey != "" {
-		if strings.Contains(connectUrl, "?") {
-			connectUrl += "&" + auth.Prof.SecretKey
-		} else {
-			connectUrl += "?" + auth.Prof.SecretKey
-		}
-	}
 	req, err := http.NewRequest("CONNECT", connectUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CONNECT request: %w", err)
 	}
+
+	if auth.Prof.SNI != "" {
+		if auth.Prof.Port != 0 && auth.Prof.Port != 443 {
+			req.Host = fmt.Sprintf("%s:%d", auth.Prof.SNI, auth.Prof.Port)
+		} else {
+			req.Host = auth.Prof.SNI
+		}
+	}
+	base.Info("CONNECT", connectUrl, "Host:", req.Host)
 
 	utils.SetCommonHeader(req)
 	for k, v := range cstpReqHeaders {
@@ -65,11 +74,16 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 	if auth.Conn == nil || err != nil {
 		if auth.Conn != nil {
 			_ = auth.Conn.Close()
+			auth.Conn = nil
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		auth.Conn, err = utils.DialBrowserTLS(ctx, auth.Prof.HostWithPort, auth.Prof.Host, base.Cfg.InsecureSkipVerify, protectFn)
+		serverName := auth.Prof.SNI
+		if serverName == "" {
+			serverName = auth.Prof.Host
+		}
+		auth.Conn, err = utils.DialBrowserTLS(ctx, auth.Prof.HostWithPort, serverName, base.Cfg.InsecureSkipVerify, protectFn)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect for CSTP tunnel: %w", err)
 		}
@@ -77,6 +91,7 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 		err = req.Write(auth.Conn)
 		if err != nil {
 			_ = auth.Conn.Close()
+			auth.Conn = nil
 			return nil, fmt.Errorf("failed to send CONNECT: %w", err)
 		}
 	}
@@ -85,15 +100,26 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 	if err != nil {
 		if auth.Conn != nil {
 			_ = auth.Conn.Close()
+			auth.Conn = nil
 		}
 		return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		var bodyStr string
+		if resp.Body != nil {
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			bodyStr = string(bodyBytes)
+			_ = resp.Body.Close()
+		}
+		base.Error(fmt.Sprintf("CSTP tunnel negotiation failed! Status: %s (code %d). Headers: %v. Body: %s",
+			resp.Status, resp.StatusCode, resp.Header, bodyStr))
+
 		if auth.Conn != nil {
 			_ = auth.Conn.Close()
+			auth.Conn = nil
 		}
-		return nil, fmt.Errorf("CSTP tunnel negotiation failed with status: %s", resp.Status)
+		return nil, fmt.Errorf("CSTP tunnel negotiation failed with status: %s (code %d): %s", resp.Status, resp.StatusCode, bodyStr)
 	}
 
 	if base.Cfg.LogLevel == "Debug" {

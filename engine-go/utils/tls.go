@@ -46,6 +46,10 @@ func DialBrowserTLS(ctx context.Context, targetAddr string, serverName string, i
 	if host, _, err := net.SplitHostPort(serverName); err == nil {
 		sni = host
 	}
+	// Literal IP addresses are forbidden in TLS SNI by RFC 6066
+	if net.ParseIP(sni) != nil {
+		sni = ""
+	}
 
 	config := &tls.Config{
 		ServerName:         sni,

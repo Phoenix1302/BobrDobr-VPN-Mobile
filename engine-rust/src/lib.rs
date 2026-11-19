@@ -265,6 +265,56 @@ AllowedIPs = 0.0.0.0/0, ::/0
     }
 
     #[test]
+    fn test_subscription_server_config_and_mac1() {
+        let server_json = r#"{
+            "id": 1,
+            "proto": "awg",
+            "name": "Egor_awg1",
+            "mode": "split",
+            "ip": "10.8.0.2",
+            "ipv6": "fd00:8:0::2",
+            "endpoint": "176.108.243.97:443",
+            "dns": "10.8.0.1",
+            "allowed_ips": "0.0.0.0/0, ::/0",
+            "obfuscation": {
+                "Jc": 4, "Jmin": 40, "Jmax": 70,
+                "S1": 15, "S2": 45,
+                "H1": 1000, "H2": 2000, "H3": 3000, "H4": 4000
+            },
+            "config_text": "[Interface]\nAddress = 10.8.0.2/24\nPrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\n",
+            "publicKey": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
+        }"#;
+
+        let cfg = AwgConfig::parse(server_json).expect("Failed to parse subscription server JSON");
+        assert_eq!(cfg.endpoint, "176.108.243.97:443");
+        assert_eq!(cfg.address, "10.8.0.2/24");
+        assert_eq!(cfg.jc, 4);
+        assert_eq!(cfg.jmin, 40);
+        assert_eq!(cfg.jmax, 70);
+        assert_eq!(cfg.s1, 15);
+        assert_eq!(cfg.s2, 45);
+        assert_eq!(cfg.h1, 1000);
+        assert_eq!(cfg.h2, 2000);
+        assert_eq!(cfg.h3, 3000);
+        assert_eq!(cfg.h4, 4000);
+
+        // Test MAC1 in Handshake Initiation begins with H1 (1000)
+        let mut session = state::SessionState::new(
+            cfg.private_key,
+            cfg.public_key,
+            cfg.preshared_key,
+        );
+
+        let init = session.create_initiation(cfg.h1).expect("Handshake initiation failed");
+        let serialized = init.serialize(cfg.h1, cfg.s1);
+
+        // First 4 bytes must be H1 in little-endian
+        assert_eq!(&serialized[0..4], &1000u32.to_le_bytes());
+        // Total size must be 148 + S1 (15) = 163 bytes
+        assert_eq!(serialized.len(), 148 + 15);
+    }
+
+    #[test]
     fn test_replay_window() {
         let mut window = state::ReplayWindow::new();
         assert!(window.check_and_update(1));

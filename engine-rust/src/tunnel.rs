@@ -20,6 +20,7 @@ pub struct TunnelHandle {
     worker_handle: Option<JoinHandle<()>>,
     telemetry: Arc<TelemetryTracker>,
     is_running: Arc<AtomicBool>,
+    #[allow(dead_code)]
     socket_fd: c_int,
 }
 
@@ -33,21 +34,9 @@ impl TunnelHandle {
     }
 
     pub fn update_network(&self, net_id: i64) -> Result<(), c_int> {
-        if self.socket_fd >= 0 {
-            let net_id_32 = net_id as u32;
-            let res = unsafe {
-                libc::setsockopt(
-                    self.socket_fd,
-                    libc::SOL_SOCKET,
-                    36, // SO_MARK
-                    &net_id_32 as *const _ as *const libc::c_void,
-                    std::mem::size_of_val(&net_id_32) as libc::socklen_t,
-                )
-            };
-            if res < 0 {
-                log_debug!("update_network setsockopt returned: {}", io::Error::last_os_error());
-            }
-        }
+        log_debug!("update_network: net_id={}", net_id);
+        // SO_MARK requires CAP_NET_ADMIN which is not available to Android user apps (os error 1 EPERM).
+        // Outer socket protection and routing are managed by Android VpnService.protect().
         Ok(())
     }
 
@@ -377,7 +366,7 @@ fn send_handshake_initiation(
     config: &AwgConfig,
     telemetry: &TelemetryTracker,
 ) {
-    match session.create_initiation() {
+    match session.create_initiation(config.h1) {
         Ok(init) => {
             let init_bytes = init.serialize(config.h1, config.s1);
             match socket.send(&init_bytes) {

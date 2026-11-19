@@ -146,7 +146,8 @@ impl SessionState {
     }
 
     /// Initializes and builds a Noise_IKpsk2 Handshake Initiation packet.
-    pub fn create_initiation(&mut self) -> Result<HandshakeInitiation, String> {
+    /// In AmneziaWG, MAC1 is computed over msg[0..116] starting with custom header H1.
+    pub fn create_initiation(&mut self, h1: u32) -> Result<HandshakeInitiation, String> {
         let (e_priv, e_pub) = generate_ephemeral_keypair();
         self.ephemeral_priv = Some(e_priv);
         self.ephemeral_pub = Some(e_pub);
@@ -220,13 +221,14 @@ impl SessionState {
         self.last_handshake_sent = current_timestamp_ms();
 
         // 13. MAC1 = MAC(Hash(LABEL_MAC1 || Spk), msg[0..116])
+        // CRITICAL FOR AMNEZIAWG: The packet begins with H1 (little-endian u32), NOT standard WireGuard type 1!
         let mut mac1_key_input = Vec::with_capacity(8 + 32);
         mac1_key_input.extend_from_slice(LABEL_MAC1);
         mac1_key_input.extend_from_slice(&self.remote_pub);
         let mac1_key = blake2s_256(&mac1_key_input);
 
         let mut pre_mac_data = Vec::with_capacity(116);
-        pre_mac_data.extend_from_slice(&1u32.to_le_bytes()); // wireguard standard type 1
+        pre_mac_data.extend_from_slice(&h1.to_le_bytes()); // AmneziaWG packet header H1
         pre_mac_data.extend_from_slice(&self.local_index.to_le_bytes());
         pre_mac_data.extend_from_slice(&e_pub);
         pre_mac_data.extend_from_slice(&encrypted_static);

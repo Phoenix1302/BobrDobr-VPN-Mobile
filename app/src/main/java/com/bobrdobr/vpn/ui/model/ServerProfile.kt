@@ -110,6 +110,10 @@ data class ServerProfile(
                     obj.put("group", effectiveGroup)
                     if (!obj.has("server")) obj.put("server", serverAddr)
                     if (!obj.has("port")) obj.put("port", serverP)
+                    if (!serverAddr.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
+                        if (!obj.has("tls_sni")) obj.put("tls_sni", serverAddr)
+                        if (!obj.has("original_host")) obj.put("original_host", serverAddr)
+                    }
                     username?.let { if (!obj.has("username")) obj.put("username", it) }
                     password?.let { if (!obj.has("password")) obj.put("password", it) }
                 }

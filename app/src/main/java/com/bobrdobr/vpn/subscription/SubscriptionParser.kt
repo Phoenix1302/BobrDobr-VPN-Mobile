@@ -351,15 +351,44 @@ object SubscriptionParser {
         val h3 = obfObj?.optLong("H3", obfObj.optLong("h3", -1L)) ?: obj.optLong("h3", obj.optLong("H3", -1L))
         val h4 = obfObj?.optLong("H4", obfObj.optLong("h4", -1L)) ?: obj.optLong("h4", obj.optLong("H4", -1L))
 
-        val privKey = obj.optString("private_key", obj.optString("privateKey", ""))
-        val pubKey = obj.optString("public_key", obj.optString("publicKey", ""))
+        val privKey = obj.optString("private_key",
+            obj.optString("privateKey",
+            obj.optString("client_private_key",
+            obj.optString("clientPrivateKey", ""))))
+
+        var pubKey = obj.optString("public_key",
+            obj.optString("publicKey",
+            obj.optString("server_public_key",
+            obj.optString("serverPublicKey",
+            obj.optString("peer_public_key",
+            obj.optString("peerPublicKey",
+            obj.optString("peer_key",
+            obj.optString("peerKey", ""))))))))
+
+        if (pubKey.isBlank()) {
+            val peerObj = obj.optJSONObject("peer") ?: obj.optJSONObject("server")
+            if (peerObj != null) {
+                pubKey = peerObj.optString("public_key",
+                    peerObj.optString("publicKey",
+                    peerObj.optString("server_public_key",
+                    peerObj.optString("serverPublicKey", ""))))
+            }
+        }
+
+        var ep = if (endpoint.isNotBlank()) endpoint else obj.optString("endpoint", "")
+        if (ep.isBlank()) {
+            val srvHost = obj.optString("server", obj.optString("host", defaultHost))
+            val srvPort = obj.optInt("port", obj.optInt("serverPort", 51820))
+            if (srvHost.isNotBlank()) {
+                ep = if (srvHost.contains(":")) srvHost else "$srvHost:$srvPort"
+            }
+        }
 
         if (rawConfig.isBlank()) {
             if (privKey.isBlank()) return ""
             val addr = if (ip.isNotBlank()) {
                 if (ipv6.isNotBlank()) "$ip/32, $ipv6/128" else "$ip/32"
             } else "10.8.0.2/32"
-            val ep = if (endpoint.isNotBlank()) endpoint else if (defaultHost.isNotBlank()) "$defaultHost:51820" else ""
             val psk = obj.optString("preshared_key", obj.optString("presharedKey", ""))
             val aIps = if (allowedIps.isNotBlank()) allowedIps else "0.0.0.0/0, ::/0"
 
@@ -417,8 +446,11 @@ object SubscriptionParser {
 
         // 4. Check [Peer]
         if (config.contains(Regex("(?i)\\[Peer\\]"))) {
-            if (!config.contains(Regex("(?im)^\\s*Endpoint\\s*=")) && endpoint.isNotBlank()) {
-                config = config.replaceFirst(Regex("(?i)(\\[Peer\\]\\r?\\n)"), "$1Endpoint = $endpoint\n")
+            if (!config.contains(Regex("(?im)^\\s*PublicKey\\s*=")) && pubKey.isNotBlank()) {
+                config = config.replaceFirst(Regex("(?i)(\\[Peer\\]\\r?\\n)"), "$1PublicKey = $pubKey\n")
+            }
+            if (!config.contains(Regex("(?im)^\\s*Endpoint\\s*=")) && ep.isNotBlank()) {
+                config = config.replaceFirst(Regex("(?i)(\\[Peer\\]\\r?\\n)"), "$1Endpoint = $ep\n")
             }
             if (!config.contains(Regex("(?im)^\\s*AllowedIPs\\s*=")) && allowedIps.isNotBlank()) {
                 config = config.replaceFirst(Regex("(?i)(\\[Peer\\]\\r?\\n)"), "$1AllowedIPs = $allowedIps\n")
@@ -427,7 +459,9 @@ object SubscriptionParser {
             val peerBlock = buildString {
                 append("\n[Peer]\n")
                 if (pubKey.isNotBlank()) append("PublicKey = $pubKey\n")
-                if (endpoint.isNotBlank()) append("Endpoint = $endpoint\n")
+                if (ep.isNotBlank()) append("Endpoint = $ep\n")
+                val psk = obj.optString("preshared_key", obj.optString("presharedKey", ""))
+                if (psk.isNotBlank()) append("PresharedKey = $psk\n")
                 val aIps = if (allowedIps.isNotBlank()) allowedIps else "0.0.0.0/0, ::/0"
                 append("AllowedIPs = $aIps\n")
             }

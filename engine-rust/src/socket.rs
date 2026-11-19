@@ -140,26 +140,9 @@ impl ProtectedUdpSocket {
 
     /// Update network association (e.g. Wi-Fi <-> Cellular handoff)
     pub fn update_network(&self, net_id: i64) -> Result<(), c_int> {
-        log_info!("Updating network binding for UDP socket fd={} to net_id={}", self.fd, net_id);
-        if net_id == 0 {
-            return Ok(());
-        }
-
-        // Try SO_MARK or android_setsocknetwork
-        let net_id_32 = net_id as u32;
-        let res = unsafe {
-            libc::setsockopt(
-                self.fd,
-                libc::SOL_SOCKET,
-                36, // SO_MARK on Linux
-                &net_id_32 as *const _ as *const libc::c_void,
-                std::mem::size_of_val(&net_id_32) as libc::socklen_t,
-            )
-        };
-
-        if res < 0 {
-            log_debug!("setsockopt SO_MARK returned: {}", io::Error::last_os_error());
-        }
+        log_debug!("Updating network binding for UDP socket fd={} to net_id={}", self.fd, net_id);
+        // Note: SO_MARK requires CAP_NET_ADMIN which is not available to Android user apps (EPERM os error 1).
+        // Socket protection and network binding are managed outside by Android VpnService.protect(fd).
         Ok(())
     }
 

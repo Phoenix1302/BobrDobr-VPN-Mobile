@@ -147,8 +147,19 @@ class VpnTunnelService : VpnService(), SocketProtector {
             scope = serviceScope,
             onStateChanged = { state ->
                 serviceScope.launch {
+                    DebugLogger.i(TAG, "NativeEngineController onStateChanged: $state")
                     _vpnState.value = state
                     updateNotification(state)
+
+                    if (state is VpnState.Connected) {
+                        DebugLogger.i(TAG, "Native handshake confirmed. Starting ping monitor.")
+                        activeConfig?.let { startPingMonitor(it) }
+                    } else if (state is VpnState.Disconnected || state is VpnState.Error) {
+                        stopPingMonitor()
+                        if (state is VpnState.Error) {
+                            closeTunResources()
+                        }
+                    }
                 }
             },
             onStatsUpdated = { stats ->
@@ -327,23 +338,75 @@ class VpnTunnelService : VpnService(), SocketProtector {
             throw IllegalStateException(errMsg)
         }
 
-        // For AmneziaWG: check Endpoint in config.rawConfigJson
-        if (config.protocol == VpnProtocol.AMNEZIA_WG && !resolvedServerIp.isNullOrBlank()) {
+        // Rewrite server endpoint domain to resolved physical IP to avoid DNS deadlock after TUN establish
+        if (!resolvedServerIp.isNullOrBlank()) {
             try {
-                val endpointRegex = Regex("(?i)(Endpoint\\s*=\\s*)([^:\\s]+)(:\\d+)")
-                if (endpointRegex.containsMatchIn(effectiveRawJson)) {
-                    effectiveRawJson = endpointRegex.replace(effectiveRawJson) { mr ->
-                        val host = mr.groupValues[2]
-                        if (!host.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
-                            "${mr.groupValues[1]}$resolvedServerIp${mr.groupValues[3]}"
-                        } else {
-                            mr.value
+                if (effectiveRawJson.trim().startsWith("{")) {
+                    val json = org.json.JSONObject(effectiveRawJson)
+                    val port = config.serverPort.takeIf { it > 0 } ?: if (config.protocol == VpnProtocol.AMNEZIA_WG) 51820 else 443
+
+                    if (config.protocol == VpnProtocol.OPENCONNECT) {
+                        val origHost = json.optString("host", config.serverAddress)
+                        val isOrigDomain = origHost.isNotBlank() && !origHost.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))
+                        if (isOrigDomain) {
+                            if (!json.has("tls_sni") || json.optString("tls_sni").isBlank()) {
+                                json.put("tls_sni", origHost)
+                            }
+                            if (!json.has("original_host") || json.optString("original_host").isBlank()) {
+                                json.put("original_host", origHost)
+                            }
                         }
                     }
-                    DebugLogger.i(TAG, "Replaced AmneziaWG Endpoint domain with resolved IP $resolvedServerIp")
+
+                    if (json.has("server")) json.put("server", "$resolvedServerIp:$port")
+                    if (json.has("serverAddress")) json.put("serverAddress", resolvedServerIp)
+                    if (json.has("host")) json.put("host", resolvedServerIp)
+                    if (json.has("endpoint")) {
+                        val epStr = json.optString("endpoint", "")
+                        val epPort = if (epStr.contains(":")) epStr.substringAfter(":") else port.toString()
+                        json.put("endpoint", "$resolvedServerIp:$epPort")
+                    }
+
+                    // Also rewrite embedded INI text if any inside JSON
+                    for (key in listOf("config_text", "config_content", "config", "configText", "raw_config")) {
+                        if (json.has(key)) {
+                            val embedded = json.getString(key)
+                            val endpointRegex = Regex("(?im)^(\\s*Endpoint\\s*=\\s*)([^:\\s#;]+)(?::(\\d+))?")
+                            if (endpointRegex.containsMatchIn(embedded)) {
+                                val rewritten = endpointRegex.replace(embedded) { mr ->
+                                    val host = mr.groupValues[2].trim()
+                                    val epPort = mr.groupValues[3].ifEmpty { port.toString() }
+                                    if (!host.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
+                                        "${mr.groupValues[1]}$resolvedServerIp:$epPort"
+                                    } else {
+                                        mr.value
+                                    }
+                                }
+                                json.put(key, rewritten)
+                            }
+                        }
+                    }
+                    effectiveRawJson = json.toString()
+                    DebugLogger.i(TAG, "Replaced server domain with resolved IP $resolvedServerIp in config JSON")
+                } else {
+                    // Raw INI text format (WireGuard / AmneziaWG)
+                    val port = config.serverPort.takeIf { it > 0 } ?: 51820
+                    val endpointRegex = Regex("(?im)^(\\s*Endpoint\\s*=\\s*)([^:\\s#;]+)(?::(\\d+))?")
+                    if (endpointRegex.containsMatchIn(effectiveRawJson)) {
+                        effectiveRawJson = endpointRegex.replace(effectiveRawJson) { mr ->
+                            val host = mr.groupValues[2].trim()
+                            val epPort = mr.groupValues[3].ifEmpty { port.toString() }
+                            if (!host.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
+                                "${mr.groupValues[1]}$resolvedServerIp:$epPort"
+                            } else {
+                                mr.value
+                            }
+                        }
+                        DebugLogger.i(TAG, "Replaced AmneziaWG Endpoint domain with resolved IP $resolvedServerIp in INI text")
+                    }
                 }
             } catch (e: Exception) {
-                DebugLogger.w(TAG, "Error rewriting AmneziaWG Endpoint: ${e.message}")
+                DebugLogger.w(TAG, "Error rewriting Endpoint with resolved IP: ${e.message}")
             }
         }
 
@@ -457,11 +520,26 @@ class VpnTunnelService : VpnService(), SocketProtector {
         }
 
         _currentConfig = effectiveConfig
-        _vpnState.value = VpnState.Connected(effectiveConfig.protocol, effectiveConfig.serverName)
-        updateNotification(_vpnState.value)
-        DebugLogger.i(TAG, "Tunnel established successfully. State transitioned to CONNECTED.")
+        DebugLogger.i(TAG, "Native engine spawned. Waiting for cryptographic handshake confirmation...")
 
-        startPingMonitor(effectiveConfig)
+        // Timeout watchdog: If native handshake does not succeed within 25 seconds, report error
+        serviceScope.launch {
+            delay(25000L)
+            if (_vpnState.value is VpnState.Connecting && _currentConfig == effectiveConfig) {
+                val errMsg = "Сервер не ответил на запрос подключения (таймаут рукопожатия). Проверьте настройки или выберите другой шлюз."
+                DebugLogger.w(TAG, errMsg)
+                val timeoutState = VpnState.Error(
+                    message = errMsg,
+                    protocol = effectiveConfig.protocol,
+                    errorCode = -4,
+                    canRetry = true
+                )
+                _vpnState.value = timeoutState
+                updateNotification(timeoutState)
+                engineController.stopTunnel()
+                closeTunResources()
+            }
+        }
     }
 
     /**

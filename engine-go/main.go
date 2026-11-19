@@ -24,6 +24,7 @@ import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -83,39 +84,45 @@ func reportStatus(statusCode int, message string) {
 	C.call_status_cb(fn, C.int(statusCode), cMsg)
 }
 
-type ParsedConfig struct {
-	Server             string `json:"server"`
-	ServerAddress      string `json:"serverAddress"`
-	Host               string `json:"host"`
-	Port               int    `json:"port"`
-	ServerPort         int    `json:"serverPort"`
-	Username           string `json:"username"`
-	User               string `json:"user"`
-	Password           string `json:"password"`
-	Pass               string `json:"pass"`
-	Group              string `json:"group"`
-	AuthGroup          string `json:"authgroup"`
+type CamouflageConfig struct {
+	Enabled            bool   `json:"enabled"`
 	Secret             string `json:"secret"`
-	SecretKey          string `json:"secretKey"`
-	Key                string `json:"key"`
-	Mode               string `json:"mode"`
-	Camouflage         *struct {
-		Enabled            bool   `json:"enabled"`
-		Secret             string `json:"secret"`
-		Query              string `json:"query"`
-		Path               string `json:"path"`
-		ConnectUrl         string `json:"connect_url"`
-		HostWithCamouflage string `json:"host_with_camouflage"`
-		TlsSni             string `json:"tls_sni"`
-		Dtls               bool   `json:"dtls"`
-	} `json:"camouflage"`
-	Insecure           *bool  `json:"insecure"`
-	SkipVerify         *bool  `json:"skip_verify"`
-	InsecureSkipVerify *bool  `json:"insecureSkipVerify"`
-	NoDtls             *bool  `json:"no_dtls"`
-	NoDTLS             *bool  `json:"noDtls"`
-	MTU                int    `json:"mtu"`
-	RawConfigJson      string `json:"rawConfigJson"`
+	Query              string `json:"query"`
+	Path               string `json:"path"`
+	ConnectUrl         string `json:"connect_url"`
+	HostWithCamouflage string `json:"host_with_camouflage"`
+	TlsSni             string `json:"tls_sni"`
+	Dtls               bool   `json:"dtls"`
+}
+
+type ParsedConfig struct {
+	Server             string            `json:"server"`
+	ServerAddress      string            `json:"serverAddress"`
+	Host               string            `json:"host"`
+	Port               int               `json:"port"`
+	ServerPort         int               `json:"serverPort"`
+	URI                string            `json:"uri"`
+	OriginalHost       string            `json:"original_host"`
+	SNI                string            `json:"sni"`
+	TlsSni             string            `json:"tls_sni"`
+	Username           string            `json:"username"`
+	User               string            `json:"user"`
+	Password           string            `json:"password"`
+	Pass               string            `json:"pass"`
+	Group              string            `json:"group"`
+	AuthGroup          string            `json:"authgroup"`
+	Secret             string            `json:"secret"`
+	SecretKey          string            `json:"secretKey"`
+	Key                string            `json:"key"`
+	Mode               string            `json:"mode"`
+	Camouflage         *CamouflageConfig `json:"camouflage"`
+	Insecure           *bool             `json:"insecure"`
+	SkipVerify         *bool             `json:"skip_verify"`
+	InsecureSkipVerify *bool             `json:"insecureSkipVerify"`
+	NoDtls             *bool             `json:"no_dtls"`
+	NoDTLS             *bool             `json:"noDtls"`
+	MTU                int               `json:"mtu"`
+	RawConfigJson      string            `json:"rawConfigJson"`
 }
 
 func parseTarget(target string) (host string, port int, secret string) {
@@ -188,6 +195,18 @@ func mergeConfigs(primary *ParsedConfig, secondary *ParsedConfig) {
 	if secondary.ServerPort != 0 && primary.ServerPort == 0 {
 		primary.ServerPort = secondary.ServerPort
 	}
+	if secondary.URI != "" && primary.URI == "" {
+		primary.URI = secondary.URI
+	}
+	if secondary.OriginalHost != "" && primary.OriginalHost == "" {
+		primary.OriginalHost = secondary.OriginalHost
+	}
+	if secondary.SNI != "" && primary.SNI == "" {
+		primary.SNI = secondary.SNI
+	}
+	if secondary.TlsSni != "" && primary.TlsSni == "" {
+		primary.TlsSni = secondary.TlsSni
+	}
 	if secondary.Username != "" && primary.Username == "" {
 		primary.Username = secondary.Username
 	}
@@ -230,6 +249,90 @@ func mergeConfigs(primary *ParsedConfig, secondary *ParsedConfig) {
 	if secondary.MTU != 0 && primary.MTU == 0 {
 		primary.MTU = secondary.MTU
 	}
+}
+
+func resolveSNI(parsed *ParsedConfig, parsedHost string) string {
+	sni := ""
+	if parsed.Camouflage != nil && parsed.Camouflage.TlsSni != "" {
+		sni = parsed.Camouflage.TlsSni
+	}
+	if sni == "" && parsed.TlsSni != "" {
+		sni = parsed.TlsSni
+	}
+	if sni == "" && parsed.OriginalHost != "" && net.ParseIP(parsed.OriginalHost) == nil {
+		sni = parsed.OriginalHost
+	}
+	if sni == "" && parsed.SNI != "" {
+		sni = parsed.SNI
+	}
+	if sni == "" && parsed.URI != "" {
+		if u, err := url.Parse(parsed.URI); err == nil {
+			h := u.Hostname()
+			if h != "" && net.ParseIP(h) == nil {
+				sni = h
+			}
+		}
+	}
+	if sni == "" && parsedHost != "" && net.ParseIP(parsedHost) == nil {
+		sni = parsedHost
+	}
+	if sni == "" && parsed.Host != "" && net.ParseIP(parsed.Host) == nil {
+		sni = parsed.Host
+	}
+	return sni
+}
+
+func resolveSecret(parsed *ParsedConfig, parsedSecret string) (secretKey string, group string) {
+	if parsed.Secret != "" {
+		secretKey = parsed.Secret
+	}
+	if secretKey == "" && parsed.Camouflage != nil {
+		if parsed.Camouflage.Secret != "" {
+			secretKey = parsed.Camouflage.Secret
+		} else if parsed.Camouflage.Query != "" {
+			secretKey = strings.TrimPrefix(parsed.Camouflage.Query, "?")
+		} else if parsed.Camouflage.Path != "" {
+			secretKey = strings.TrimPrefix(parsed.Camouflage.Path, "/?")
+		}
+	}
+	if secretKey == "" {
+		secretKey = parsed.SecretKey
+	}
+	if secretKey == "" {
+		secretKey = parsed.Key
+	}
+	if secretKey == "" && parsedSecret != "" {
+		secretKey = parsedSecret
+	}
+	if secretKey == "" && parsed.Group != "" {
+		secretKey = parsed.Group
+	}
+	if secretKey == "" && parsed.Mode != "" {
+		secretKey = parsed.Mode
+	}
+
+	if strings.Contains(secretKey, "&") {
+		parts := strings.Split(secretKey, "&")
+		for _, p := range parts {
+			if !strings.Contains(p, "=") {
+				secretKey = p
+				break
+			} else if strings.HasPrefix(p, "secret=") {
+				secretKey = strings.TrimPrefix(p, "secret=")
+				break
+			}
+		}
+	}
+	secretKey = strings.TrimLeft(secretKey, "/?")
+
+	group = parsed.Group
+	if group == "" {
+		group = parsed.AuthGroup
+	}
+	if group == "" && secretKey != "" {
+		group = secretKey
+	}
+	return secretKey, group
 }
 
 //export start_tunnel
@@ -288,40 +391,8 @@ func start_tunnel(tun_fd C.int, config_json *C.char, cb C.protect_callback_fn, s
 		}
 	}
 
-	secretKey := parsed.Secret
-	if parsed.Camouflage != nil {
-		if parsed.Camouflage.Secret != "" {
-			secretKey = parsed.Camouflage.Secret
-		} else if parsed.Camouflage.Query != "" {
-			secretKey = strings.TrimPrefix(parsed.Camouflage.Query, "?")
-		} else if parsed.Camouflage.Path != "" {
-			secretKey = strings.TrimPrefix(parsed.Camouflage.Path, "/?")
-		}
-	}
-	if secretKey == "" {
-		secretKey = parsed.SecretKey
-	}
-	if secretKey == "" {
-		secretKey = parsed.Key
-	}
-	if secretKey == "" && parsedSecret != "" {
-		secretKey = parsedSecret
-	}
-
-	// If secretKey contains query parameters (e.g. "kurwa&username=Egor_oc1")
-	if strings.Contains(secretKey, "&") {
-		parts := strings.Split(secretKey, "&")
-		for _, p := range parts {
-			if !strings.Contains(p, "=") {
-				secretKey = p
-				break
-			} else if strings.HasPrefix(p, "secret=") {
-				secretKey = strings.TrimPrefix(p, "secret=")
-				break
-			}
-		}
-	}
-	secretKey = strings.TrimLeft(secretKey, "/?")
+	secretKey, group := resolveSecret(&parsed, parsedSecret)
+	sni := resolveSNI(&parsed, parsedHost)
 
 	username := parsed.Username
 	if username == "" {
@@ -330,13 +401,6 @@ func start_tunnel(tun_fd C.int, config_json *C.char, cb C.protect_callback_fn, s
 	password := parsed.Password
 	if password == "" {
 		password = parsed.Pass
-	}
-	group := parsed.Group
-	if group == "" {
-		group = parsed.AuthGroup
-	}
-	if group == "" && secretKey != "" {
-		group = secretKey
 	}
 
 	insecure := true
@@ -362,6 +426,8 @@ func start_tunnel(tun_fd C.int, config_json *C.char, cb C.protect_callback_fn, s
 
 	auth.ResetProfile()
 	auth.Prof.Host = parsedHost
+	auth.Prof.Port = parsedPort
+	auth.Prof.SNI = sni
 	if parsedPort != 0 && parsedPort != 443 {
 		auth.Prof.HostWithPort = fmt.Sprintf("%s:%d", parsedHost, parsedPort)
 	} else if strings.Contains(parsedHost, ":") {

@@ -31,6 +31,8 @@ var (
 
 type Profile struct {
 	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	SNI       string `json:"sni"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 	Group     string `json:"group"`
@@ -82,6 +84,8 @@ func ResetProfile() {
 	Prof.TunnelGroup = ""
 	Prof.GroupAlias = ""
 	Prof.ConfigHash = ""
+	Prof.SNI = ""
+	Prof.Port = 0
 	WebVpnCookie = ""
 	if Conn != nil {
 		_ = Conn.Close()
@@ -93,18 +97,23 @@ func ResetProfile() {
 // InitAuth initiates AnyConnect XML authentication handshake and determines AuthPath
 func InitAuth(protectFn utils.ProtectSocketFn) error {
 	WebVpnCookie = ""
-	base.Info("Connecting to AnyConnect gateway:", Prof.HostWithPort)
+	base.Info("Connecting to AnyConnect gateway:", Prof.HostWithPort, "SNI:", Prof.SNI)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	serverName := Prof.SNI
+	if serverName == "" {
+		serverName = Prof.Host
+	}
+
 	var err error
-	Conn, err = utils.DialBrowserTLS(ctx, Prof.HostWithPort, Prof.Host, base.Cfg.InsecureSkipVerify, protectFn)
+	Conn, err = utils.DialBrowserTLS(ctx, Prof.HostWithPort, serverName, base.Cfg.InsecureSkipVerify, protectFn)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %w", err)
 	}
 
-	base.Info("Connected to HTTPS on", Prof.HostWithPort, "(uTLS Chrome Auto, ALPN: http/1.1)")
+	base.Info("Connected to HTTPS on", Prof.HostWithPort, "(SNI:", serverName, ", uTLS Chrome Auto, ALPN: http/1.1)")
 	BufR = bufio.NewReader(Conn)
 
 	dtd := new(proto.DTD)
@@ -205,7 +214,14 @@ func tplPost(typ int, path string, dtd *proto.DTD) error {
 	if err != nil {
 		return err
 	}
-	base.Info("POST", reqUrl)
+	if Prof.SNI != "" {
+		if Prof.Port != 0 && Prof.Port != 443 {
+			req.Host = fmt.Sprintf("%s:%d", Prof.SNI, Prof.Port)
+		} else {
+			req.Host = Prof.SNI
+		}
+	}
+	base.Info("POST", reqUrl, "Host:", req.Host)
 
 	utils.SetCommonHeader(req)
 	for k, v := range reqHeaders {
