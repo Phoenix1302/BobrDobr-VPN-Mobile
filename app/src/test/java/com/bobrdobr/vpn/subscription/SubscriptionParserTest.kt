@@ -183,7 +183,7 @@ class SubscriptionParserTest {
         assertEquals("Egor_oc1", oc.username)
         assertEquals("secret_password", oc.password)
         assertEquals("split", oc.group)
-        assertEquals("split", oc.secret)
+        assertEquals("", oc.secret)
     }
 
     @Test
@@ -227,5 +227,124 @@ class SubscriptionParserTest {
         val json = org.json.JSONObject(ocTunnelConfig.rawConfigJson)
         assertEquals("kurwa", json.getString("secret"))
         assertEquals("kurwa", json.getString("secretKey"))
+    }
+
+    @Test
+    fun testParseOfficialReferenceSubscriptionJson() {
+        val payload = """
+            {
+              "status": "active",
+              "user": {
+                "username": "Egor",
+                "role": "user",
+                "expires_at": "2026-12-04T23:59:59"
+              },
+              "server": {
+                "host": "bobr.netphoenix.ru",
+                "app_version": "1.2.0"
+              },
+              "connections": [
+                {
+                  "id": 1,
+                  "proto": "awg",
+                  "name": "Egor_awg1",
+                  "mode": "split",
+                  "ip": "10.8.0.2",
+                  "ipv6": "fd00:8:0::2",
+                  "endpoint": "bobr.netphoenix.ru:443",
+                  "dns": "10.8.0.1",
+                  "allowed_ips": "0.0.0.0/0, ::/0",
+                  "obfuscation": {
+                    "Jc": 4,
+                    "Jmin": 40,
+                    "Jmax": 70,
+                    "S1": 15,
+                    "S2": 45,
+                    "H1": 1,
+                    "H2": 2,
+                    "H3": 3,
+                    "H4": 4
+                  },
+                  "config_text": "[Interface]\nPrivateKey = aGVsbG93b3JsZHByaXZhdGVrZXkxMjM0NTY3ODkwMTI=\n\n[Peer]\nPublicKey = cHVibGlja2V5MTIzNDU2Nzg5MDEyMzQ1Njc4OTA=\n"
+                },
+                {
+                  "id": 2,
+                  "proto": "ocserv",
+                  "name": "Egor_oc1",
+                  "host": "bobr.netphoenix.ru",
+                  "port": 443,
+                  "mode": "split",
+                  "group": "split",
+                  "username": "Egor_oc1",
+                  "password": "my_password",
+                  "camouflage": {
+                    "enabled": true,
+                    "secret": "my_camouflage_token",
+                    "path": "/?my_camouflage_token",
+                    "query": "?my_camouflage_token",
+                    "connect_url": "https://bobr.netphoenix.ru:443/?my_camouflage_token",
+                    "host_with_camouflage": "bobr.netphoenix.ru:443/?my_camouflage_token",
+                    "tls_sni": "bobr.netphoenix.ru",
+                    "dtls": true
+                  },
+                  "uri": "anyconnect://bobr.netphoenix.ru:443/?my_camouflage_token&username=Egor_oc1"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val info = SubscriptionParser.parse(payload, "https://bobr.netphoenix.ru/sub/test")
+        assertEquals(SubscriptionStatus.ACTIVE, info.status)
+        assertEquals("Egor", info.username)
+        assertEquals("user", info.role)
+        assertEquals("bobr.netphoenix.ru", info.serverHost)
+        assertTrue(info.isActive)
+        assertEquals(2, info.profiles.size)
+
+        // 1. Verify AmneziaWG enriched profile
+        val awg = info.profiles[0]
+        assertEquals(VpnProtocol.AMNEZIA_WG, awg.protocol)
+        assertEquals("bobr.netphoenix.ru", awg.serverAddress)
+        assertEquals(443, awg.serverPort)
+        assertNotNull(awg.configText)
+        val text = awg.configText!!
+        assertTrue(text.contains("Jc = 4"))
+        assertTrue(text.contains("Jmin = 40"))
+        assertTrue(text.contains("Jmax = 70"))
+        assertTrue(text.contains("S1 = 15"))
+        assertTrue(text.contains("S2 = 45"))
+        assertTrue(text.contains("H1 = 1"))
+        assertTrue(text.contains("DNS = 10.8.0.1"))
+        assertTrue(text.contains("Address = 10.8.0.2/32, fd00:8:0::2/128"))
+        assertTrue(text.contains("Endpoint = bobr.netphoenix.ru:443"))
+        assertTrue(text.contains("AllowedIPs = 0.0.0.0/0, ::/0"))
+
+        val awgServer = awg.toServerProfile()
+        val awgTunnelConfig = awgServer.toTunnelConfig()
+        assertEquals("10.8.0.2", awgTunnelConfig.ipv4Address)
+        assertTrue(awgTunnelConfig.rawConfigJson.contains("Jc = 4"))
+        assertTrue(awgTunnelConfig.rawConfigJson.contains("Endpoint = bobr.netphoenix.ru:443"))
+
+        // 2. Verify OpenConnect profile with Camouflage Secret
+        val oc = info.profiles[1]
+        assertEquals(VpnProtocol.OPENCONNECT, oc.protocol)
+        assertEquals("bobr.netphoenix.ru", oc.serverAddress)
+        assertEquals(443, oc.serverPort)
+        assertEquals("Egor_oc1", oc.username)
+        assertEquals("my_password", oc.password)
+        assertEquals("split", oc.group)
+        assertEquals("my_camouflage_token", oc.secret)
+
+        val ocServer = oc.toServerProfile()
+        assertEquals("my_camouflage_token", ocServer.secret)
+        assertEquals("split", ocServer.group)
+
+        val ocTunnelConfig = ocServer.toTunnelConfig()
+        val ocJson = org.json.JSONObject(ocTunnelConfig.rawConfigJson)
+        assertEquals("my_camouflage_token", ocJson.getString("secret"))
+        assertEquals("my_camouflage_token", ocJson.getString("secretKey"))
+        assertEquals("split", ocJson.getString("group"))
+        assertEquals("bobr.netphoenix.ru", ocJson.getString("server"))
+        assertEquals(443, ocJson.getInt("port"))
     }
 }

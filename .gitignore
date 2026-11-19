@@ -21,6 +21,7 @@
 # Keystores & Service Accounts
 *.jks
 *.keystore
+!keystore/release.keystore
 *firebase-adminsdk*.json
 *adminsdk*.json
 service-account*.json

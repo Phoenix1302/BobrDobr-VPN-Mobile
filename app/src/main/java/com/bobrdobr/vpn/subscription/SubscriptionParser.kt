@@ -171,8 +171,17 @@ object SubscriptionParser {
             val password = obj.optString("password", "")
             val group = obj.optString("group", "split")
 
-            // Extract camouflage secret from camouflage object, URI query (e.g. ?kurwa or ?secret=...), or direct secret field
-            var secret = obj.optJSONObject("camouflage")?.optString("secret", "") ?: ""
+            // Extract camouflage secret from camouflage object, URI query (e.g. ?secret=...), or direct secret field
+            val camoObj = obj.optJSONObject("camouflage")
+            var secret = camoObj?.optString("secret", "") ?: ""
+            if (secret.isEmpty() && camoObj != null) {
+                val q = camoObj.optString("query", "").trimStart('?')
+                if (q.isNotEmpty()) secret = q
+                if (secret.isEmpty()) {
+                    val p = camoObj.optString("path", "").trimStart('/', '?')
+                    if (p.isNotEmpty()) secret = p
+                }
+            }
             if (secret.isEmpty() && uriStr.isNotEmpty()) {
                 try {
                     val uri = URI(uriStr)
@@ -198,14 +207,21 @@ object SubscriptionParser {
                 } catch (_: Exception) {}
             }
             if (secret.isEmpty()) {
-                secret = obj.optString("secret", obj.optString("secretKey", group))
-            }
-            if (secret.isEmpty()) {
-                secret = group
+                secret = obj.optString("secret", obj.optString("secretKey", ""))
             }
 
             var host = defaultHost
             var port = 443
+            if (obj.has("host") && obj.getString("host").isNotBlank()) {
+                host = obj.getString("host")
+            } else if (obj.has("server") && obj.getString("server").isNotBlank()) {
+                host = obj.getString("server")
+            }
+            if (obj.has("port") && obj.optInt("port", 0) > 0) {
+                port = obj.getInt("port")
+            } else if (obj.has("serverPort") && obj.optInt("serverPort", 0) > 0) {
+                port = obj.getInt("serverPort")
+            }
 
             if (uriStr.isNotEmpty()) {
                 try {
@@ -215,7 +231,7 @@ object SubscriptionParser {
                 } catch (_: Exception) {}
             }
             if (host.isEmpty()) {
-                host = obj.optString("host", obj.optString("server", "127.0.0.1"))
+                host = "127.0.0.1"
             }
 
             val (location, countryCode, flagEmoji) = detectLocation(name)
@@ -240,60 +256,51 @@ object SubscriptionParser {
             )
         } else {
             // AmneziaWG profile
-            var configText = obj.optString("config_text", "")
-            if (configText.isBlank()) configText = obj.optString("config_content", "")
-            if (configText.isBlank()) configText = obj.optString("config", "")
-            if (configText.isBlank()) configText = obj.optString("configText", "")
-            if (configText.isBlank()) configText = obj.optString("raw_config", "")
+            var rawConfig = obj.optString("config_text", "")
+            if (rawConfig.isBlank()) rawConfig = obj.optString("config_content", "")
+            if (rawConfig.isBlank()) rawConfig = obj.optString("config", "")
+            if (rawConfig.isBlank()) rawConfig = obj.optString("configText", "")
+            if (rawConfig.isBlank()) rawConfig = obj.optString("raw_config", "")
+
+            val endpoint = obj.optString("endpoint", "")
+            val ip = obj.optString("ip", obj.optString("address", ""))
+            val ipv6 = obj.optString("ipv6", "")
+            val dns = obj.optString("dns", "")
+            val allowedIps = obj.optString("allowed_ips", obj.optString("allowedIps", ""))
+            val obfObj = obj.optJSONObject("obfuscation")
+
+            val configText = enrichAwgConfig(rawConfig, endpoint, ip, ipv6, dns, allowedIps, obfObj, obj, defaultHost)
 
             var serverAddr = defaultHost
             var serverPort = 51820
             val dnsList = mutableListOf<String>()
 
-            // If configText is blank, attempt to construct AmneziaWG INI from individual JSON fields
-            val privKey = obj.optString("private_key", obj.optString("privateKey", ""))
-            val pubKey = obj.optString("public_key", obj.optString("publicKey", ""))
-            if (configText.isBlank() && privKey.isNotBlank()) {
-                val addr = obj.optString("address", obj.optString("ip", "10.8.0.2/32"))
-                val ep = obj.optString("endpoint", if (serverAddr.isNotBlank()) "$serverAddr:$serverPort" else "")
-                val psk = obj.optString("preshared_key", obj.optString("presharedKey", ""))
-                val dnsVal = obj.optString("dns", "")
-                val sb = StringBuilder()
-                sb.append("[Interface]\n")
-                sb.append("Address = $addr\n")
-                sb.append("PrivateKey = $privKey\n")
-                if (dnsVal.isNotBlank()) sb.append("DNS = $dnsVal\n")
-                if (obj.has("jc")) sb.append("Jc = ${obj.optInt("jc")}\n")
-                if (obj.has("jmin")) sb.append("Jmin = ${obj.optInt("jmin")}\n")
-                if (obj.has("jmax")) sb.append("Jmax = ${obj.optInt("jmax")}\n")
-                if (obj.has("s1")) sb.append("S1 = ${obj.optInt("s1")}\n")
-                if (obj.has("s2")) sb.append("S2 = ${obj.optInt("s2")}\n")
-                if (obj.has("h1")) sb.append("H1 = ${obj.optInt("h1")}\n")
-                if (obj.has("h2")) sb.append("H2 = ${obj.optInt("h2")}\n")
-                if (obj.has("h3")) sb.append("H3 = ${obj.optInt("h3")}\n")
-                if (obj.has("h4")) sb.append("H4 = ${obj.optInt("h4")}\n")
-                sb.append("\n[Peer]\n")
-                if (pubKey.isNotBlank()) sb.append("PublicKey = $pubKey\n")
-                if (ep.isNotBlank()) sb.append("Endpoint = $ep\n")
-                if (psk.isNotBlank()) sb.append("PresharedKey = $psk\n")
-                sb.append("AllowedIPs = 0.0.0.0/0\n")
-                configText = sb.toString()
+            if (dns.isNotBlank()) {
+                dns.split(",").forEach { d ->
+                    val trimmedD = d.trim()
+                    if (trimmedD.isNotEmpty() && !dnsList.contains(trimmedD)) {
+                        dnsList.add(trimmedD)
+                    }
+                }
             }
 
             if (configText.isNotBlank()) {
                 val validation = ConfigValidator.validateAwg(configText)
                 if (validation is ValidationResult.SuccessAwg) {
-                    serverAddr = validation.serverAddress
-                    serverPort = validation.serverPort
-                    dnsList.addAll(validation.dnsServers)
+                    if (validation.serverAddress.isNotBlank()) {
+                        serverAddr = validation.serverAddress
+                        serverPort = validation.serverPort
+                    }
+                    validation.dnsServers.forEach { d ->
+                        if (!dnsList.contains(d)) dnsList.add(d)
+                    }
                 }
             }
 
-            val endpoint = obj.optString("endpoint", "")
             if (endpoint.isNotEmpty() && endpoint.contains(":")) {
                 val epParts = endpoint.split(":")
                 serverAddr = epParts[0].trim()
-                serverPort = epParts[1].toIntOrNull() ?: 51820
+                serverPort = epParts[1].toIntOrNull() ?: serverPort
             } else if (serverAddr.isEmpty()) {
                 serverAddr = obj.optString("host", obj.optString("server", "127.0.0.1"))
                 serverPort = obj.optInt("port", 51820)
@@ -318,6 +325,116 @@ object SubscriptionParser {
                 rawConfigJson = obj.toString()
             )
         }
+    }
+
+    /**
+     * Enriches AmneziaWG configuration with missing obfuscation params, Endpoint, Address, and DNS.
+     */
+    fun enrichAwgConfig(
+        rawConfig: String,
+        endpoint: String,
+        ip: String,
+        ipv6: String,
+        dns: String,
+        allowedIps: String,
+        obfObj: JSONObject?,
+        obj: JSONObject,
+        defaultHost: String
+    ): String {
+        val jc = obfObj?.optInt("Jc", obfObj.optInt("jc", -1)) ?: obj.optInt("jc", obj.optInt("Jc", -1))
+        val jmin = obfObj?.optInt("Jmin", obfObj.optInt("jmin", -1)) ?: obj.optInt("jmin", obj.optInt("Jmin", -1))
+        val jmax = obfObj?.optInt("Jmax", obfObj.optInt("jmax", -1)) ?: obj.optInt("jmax", obj.optInt("Jmax", -1))
+        val s1 = obfObj?.optInt("S1", obfObj.optInt("s1", -1)) ?: obj.optInt("s1", obj.optInt("S1", -1))
+        val s2 = obfObj?.optInt("S2", obfObj.optInt("s2", -1)) ?: obj.optInt("s2", obj.optInt("S2", -1))
+        val h1 = obfObj?.optLong("H1", obfObj.optLong("h1", -1L)) ?: obj.optLong("h1", obj.optLong("H1", -1L))
+        val h2 = obfObj?.optLong("H2", obfObj.optLong("h2", -1L)) ?: obj.optLong("h2", obj.optLong("H2", -1L))
+        val h3 = obfObj?.optLong("H3", obfObj.optLong("h3", -1L)) ?: obj.optLong("h3", obj.optLong("H3", -1L))
+        val h4 = obfObj?.optLong("H4", obfObj.optLong("h4", -1L)) ?: obj.optLong("h4", obj.optLong("H4", -1L))
+
+        val privKey = obj.optString("private_key", obj.optString("privateKey", ""))
+        val pubKey = obj.optString("public_key", obj.optString("publicKey", ""))
+
+        if (rawConfig.isBlank()) {
+            if (privKey.isBlank()) return ""
+            val addr = if (ip.isNotBlank()) {
+                if (ipv6.isNotBlank()) "$ip/32, $ipv6/128" else "$ip/32"
+            } else "10.8.0.2/32"
+            val ep = if (endpoint.isNotBlank()) endpoint else if (defaultHost.isNotBlank()) "$defaultHost:51820" else ""
+            val psk = obj.optString("preshared_key", obj.optString("presharedKey", ""))
+            val aIps = if (allowedIps.isNotBlank()) allowedIps else "0.0.0.0/0, ::/0"
+
+            val sb = StringBuilder()
+            sb.append("[Interface]\n")
+            sb.append("Address = $addr\n")
+            sb.append("PrivateKey = $privKey\n")
+            if (dns.isNotBlank()) sb.append("DNS = $dns\n")
+            if (jc >= 0) sb.append("Jc = $jc\n")
+            if (jmin >= 0) sb.append("Jmin = $jmin\n")
+            if (jmax >= 0) sb.append("Jmax = $jmax\n")
+            if (s1 >= 0) sb.append("S1 = $s1\n")
+            if (s2 >= 0) sb.append("S2 = $s2\n")
+            if (h1 >= 0) sb.append("H1 = $h1\n")
+            if (h2 >= 0) sb.append("H2 = $h2\n")
+            if (h3 >= 0) sb.append("H3 = $h3\n")
+            if (h4 >= 0) sb.append("H4 = $h4\n")
+
+            sb.append("\n[Peer]\n")
+            if (pubKey.isNotBlank()) sb.append("PublicKey = $pubKey\n")
+            if (ep.isNotBlank()) sb.append("Endpoint = $ep\n")
+            if (psk.isNotBlank()) sb.append("PresharedKey = $psk\n")
+            sb.append("AllowedIPs = $aIps\n")
+            return sb.toString()
+        }
+
+        var config = rawConfig
+
+        // 1. Check obfuscation in [Interface]
+        if (!config.contains(Regex("(?im)^\\s*Jc\\s*=")) && jc >= 0) {
+            val obfLines = buildString {
+                append("Jc = $jc\n")
+                if (jmin >= 0) append("Jmin = $jmin\n")
+                if (jmax >= 0) append("Jmax = $jmax\n")
+                if (s1 >= 0) append("S1 = $s1\n")
+                if (s2 >= 0) append("S2 = $s2\n")
+                if (h1 >= 0) append("H1 = $h1\n")
+                if (h2 >= 0) append("H2 = $h2\n")
+                if (h3 >= 0) append("H3 = $h3\n")
+                if (h4 >= 0) append("H4 = $h4\n")
+            }
+            config = config.replaceFirst(Regex("(?i)(\\[Interface\\]\\r?\\n)"), "$1$obfLines")
+        }
+
+        // 2. Check DNS in [Interface]
+        if (!config.contains(Regex("(?im)^\\s*DNS\\s*=")) && dns.isNotBlank()) {
+            config = config.replaceFirst(Regex("(?i)(\\[Interface\\]\\r?\\n)"), "$1DNS = $dns\n")
+        }
+
+        // 3. Check Address in [Interface]
+        if (!config.contains(Regex("(?im)^\\s*Address\\s*=")) && ip.isNotBlank()) {
+            val addrStr = if (ipv6.isNotBlank()) "$ip/32, $ipv6/128" else "$ip/32"
+            config = config.replaceFirst(Regex("(?i)(\\[Interface\\]\\r?\\n)"), "$1Address = $addrStr\n")
+        }
+
+        // 4. Check [Peer]
+        if (config.contains(Regex("(?i)\\[Peer\\]"))) {
+            if (!config.contains(Regex("(?im)^\\s*Endpoint\\s*=")) && endpoint.isNotBlank()) {
+                config = config.replaceFirst(Regex("(?i)(\\[Peer\\]\\r?\\n)"), "$1Endpoint = $endpoint\n")
+            }
+            if (!config.contains(Regex("(?im)^\\s*AllowedIPs\\s*=")) && allowedIps.isNotBlank()) {
+                config = config.replaceFirst(Regex("(?i)(\\[Peer\\]\\r?\\n)"), "$1AllowedIPs = $allowedIps\n")
+            }
+        } else {
+            val peerBlock = buildString {
+                append("\n[Peer]\n")
+                if (pubKey.isNotBlank()) append("PublicKey = $pubKey\n")
+                if (endpoint.isNotBlank()) append("Endpoint = $endpoint\n")
+                val aIps = if (allowedIps.isNotBlank()) allowedIps else "0.0.0.0/0, ::/0"
+                append("AllowedIPs = $aIps\n")
+            }
+            config += peerBlock
+        }
+
+        return config
     }
 
     /**

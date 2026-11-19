@@ -100,8 +100,14 @@ type ParsedConfig struct {
 	Key                string `json:"key"`
 	Mode               string `json:"mode"`
 	Camouflage         *struct {
-		Secret string `json:"secret"`
-		Query  string `json:"query"`
+		Enabled            bool   `json:"enabled"`
+		Secret             string `json:"secret"`
+		Query              string `json:"query"`
+		Path               string `json:"path"`
+		ConnectUrl         string `json:"connect_url"`
+		HostWithCamouflage string `json:"host_with_camouflage"`
+		TlsSni             string `json:"tls_sni"`
+		Dtls               bool   `json:"dtls"`
 	} `json:"camouflage"`
 	Insecure           *bool  `json:"insecure"`
 	SkipVerify         *bool  `json:"skip_verify"`
@@ -283,10 +289,13 @@ func start_tunnel(tun_fd C.int, config_json *C.char, cb C.protect_callback_fn, s
 	}
 
 	secretKey := parsed.Secret
-	if secretKey == "" && parsed.Camouflage != nil {
-		secretKey = parsed.Camouflage.Secret
-		if secretKey == "" {
+	if parsed.Camouflage != nil {
+		if parsed.Camouflage.Secret != "" {
+			secretKey = parsed.Camouflage.Secret
+		} else if parsed.Camouflage.Query != "" {
 			secretKey = strings.TrimPrefix(parsed.Camouflage.Query, "?")
+		} else if parsed.Camouflage.Path != "" {
+			secretKey = strings.TrimPrefix(parsed.Camouflage.Path, "/?")
 		}
 	}
 	if secretKey == "" {
@@ -297,12 +306,6 @@ func start_tunnel(tun_fd C.int, config_json *C.char, cb C.protect_callback_fn, s
 	}
 	if secretKey == "" && parsedSecret != "" {
 		secretKey = parsedSecret
-	}
-	if secretKey == "" && parsed.Group != "" {
-		secretKey = parsed.Group
-	}
-	if secretKey == "" && parsed.Mode != "" {
-		secretKey = parsed.Mode
 	}
 
 	// If secretKey contains query parameters (e.g. "kurwa&username=Egor_oc1")

@@ -41,44 +41,30 @@ data class ServerProfile(
         var serverP = serverPort
 
         var effectiveConfigText = configText
-        if (effectiveConfigText.isNullOrBlank() && !rawConfigJson.isNullOrBlank()) {
+        if (!rawConfigJson.isNullOrBlank() && (protocol == VpnProtocol.AMNEZIA_WG || protocol == VpnProtocol.WIREGUARD)) {
             try {
                 val json = JSONObject(rawConfigJson)
-                for (key in listOf("config_text", "config_content", "config", "configText", "raw_config")) {
-                    val embedded = json.optString(key, "")
-                    if (embedded.isNotBlank()) {
-                        effectiveConfigText = embedded
-                        break
+                var raw = effectiveConfigText ?: ""
+                if (raw.isBlank()) {
+                    for (key in listOf("config_text", "config_content", "config", "configText", "raw_config")) {
+                        val embedded = json.optString(key, "")
+                        if (embedded.isNotBlank()) {
+                            raw = embedded
+                            break
+                        }
                     }
                 }
-                if (effectiveConfigText.isNullOrBlank()) {
-                    val privKey = json.optString("private_key", json.optString("privateKey", ""))
-                    val pubKey = json.optString("public_key", json.optString("publicKey", ""))
-                    if (privKey.isNotBlank()) {
-                        val addr = json.optString("address", json.optString("ip", "10.8.0.2/32"))
-                        val ep = json.optString("endpoint", if (serverAddr.isNotBlank()) "$serverAddr:$serverP" else "")
-                        val psk = json.optString("preshared_key", json.optString("presharedKey", ""))
-                        val sb = StringBuilder()
-                        sb.append("[Interface]\n")
-                        sb.append("Address = $addr\n")
-                        sb.append("PrivateKey = $privKey\n")
-                        if (effectiveDns.isNotEmpty()) sb.append("DNS = ${effectiveDns.joinToString(", ")}\n")
-                        if (json.has("jc")) sb.append("Jc = ${json.optInt("jc")}\n")
-                        if (json.has("jmin")) sb.append("Jmin = ${json.optInt("jmin")}\n")
-                        if (json.has("jmax")) sb.append("Jmax = ${json.optInt("jmax")}\n")
-                        if (json.has("s1")) sb.append("S1 = ${json.optInt("s1")}\n")
-                        if (json.has("s2")) sb.append("S2 = ${json.optInt("s2")}\n")
-                        if (json.has("h1")) sb.append("H1 = ${json.optInt("h1")}\n")
-                        if (json.has("h2")) sb.append("H2 = ${json.optInt("h2")}\n")
-                        if (json.has("h3")) sb.append("H3 = ${json.optInt("h3")}\n")
-                        if (json.has("h4")) sb.append("H4 = ${json.optInt("h4")}\n")
-                        sb.append("\n[Peer]\n")
-                        if (pubKey.isNotBlank()) sb.append("PublicKey = $pubKey\n")
-                        if (ep.isNotBlank()) sb.append("Endpoint = $ep\n")
-                        if (psk.isNotBlank()) sb.append("PresharedKey = $psk\n")
-                        sb.append("AllowedIPs = 0.0.0.0/0\n")
-                        effectiveConfigText = sb.toString()
-                    }
+                val endpoint = json.optString("endpoint", if (serverAddr.isNotBlank()) "$serverAddr:$serverP" else "")
+                val ip = json.optString("ip", json.optString("address", ""))
+                val ipv6 = json.optString("ipv6", "")
+                val dns = json.optString("dns", if (effectiveDns.isNotEmpty()) effectiveDns.joinToString(", ") else "")
+                val allowedIps = json.optString("allowed_ips", json.optString("allowedIps", ""))
+                val obfObj = json.optJSONObject("obfuscation")
+                val enriched = com.bobrdobr.vpn.subscription.SubscriptionParser.enrichAwgConfig(
+                    raw, endpoint, ip, ipv6, dns, allowedIps, obfObj, json, serverAddr
+                )
+                if (enriched.isNotBlank()) {
+                    effectiveConfigText = enriched
                 }
             } catch (_: Exception) {}
         }
@@ -107,10 +93,21 @@ data class ServerProfile(
             try {
                 val obj = JSONObject(rawConfigJson)
                 if (protocol == VpnProtocol.OPENCONNECT) {
-                    val effectiveSecret = secret ?: group ?: obj.optString("secret", obj.optString("group", "split"))
-                    obj.put("secret", effectiveSecret)
-                    obj.put("secretKey", effectiveSecret)
-                    obj.put("group", group ?: effectiveSecret)
+                    val camoObj = obj.optJSONObject("camouflage")
+                    val effectiveSecret = secret
+                        ?: camoObj?.optString("secret")?.takeIf { it.isNotBlank() }
+                        ?: obj.optString("secret").takeIf { it.isNotBlank() }
+                        ?: obj.optString("secretKey").takeIf { it.isNotBlank() }
+                        ?: ""
+                    val effectiveGroup = group
+                        ?: obj.optString("group").takeIf { it.isNotBlank() }
+                        ?: obj.optString("authgroup").takeIf { it.isNotBlank() }
+                        ?: "split"
+                    if (effectiveSecret.isNotBlank()) {
+                        obj.put("secret", effectiveSecret)
+                        obj.put("secretKey", effectiveSecret)
+                    }
+                    obj.put("group", effectiveGroup)
                     if (!obj.has("server")) obj.put("server", serverAddr)
                     if (!obj.has("port")) obj.put("port", serverP)
                     username?.let { if (!obj.has("username")) obj.put("username", it) }

@@ -631,18 +631,45 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
                 val startTime = SystemClock.elapsedRealtime()
                 var rtt = -1L
+
+                // 1. Try fast UDP DNS query to gateway (DNS server on port 53)
                 try {
-                    Socket().use { s ->
-                        s.soTimeout = 1200
-                        s.connect(InetSocketAddress(gatewayIp, 53), 1200)
+                    java.net.DatagramSocket().use { ds ->
+                        ds.soTimeout = 800
+                        val dnsQuery = byteArrayOf(
+                            0xAA.toByte(), 0xBB.toByte(), // Transaction ID
+                            0x01, 0x00,                   // Standard query
+                            0x00, 0x01,                   // 1 Question
+                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            0x00,                         // Root '.'
+                            0x00, 0x01,                   // Type A
+                            0x00, 0x01                    // Class IN
+                        )
+                        val sendPacket = java.net.DatagramPacket(dnsQuery, dnsQuery.size, java.net.InetAddress.getByName(gatewayIp), 53)
+                        ds.send(sendPacket)
+                        val buf = ByteArray(512)
+                        val recvPacket = java.net.DatagramPacket(buf, buf.size)
+                        ds.receive(recvPacket)
                         rtt = SystemClock.elapsedRealtime() - startTime
                     }
-                } catch (e: java.net.ConnectException) {
-                    // RST packet from gateway means packet traveled through tunnel and returned - valid RTT
-                    rtt = SystemClock.elapsedRealtime() - startTime
                 } catch (_: Exception) {}
 
-                if (rtt in 1..2000) {
+                // 2. Fallback to TCP SYN/RST probe
+                if (rtt <= 0) {
+                    try {
+                        val tcpStart = SystemClock.elapsedRealtime()
+                        Socket().use { s ->
+                            s.soTimeout = 800
+                            s.connect(InetSocketAddress(gatewayIp, 53), 800)
+                            rtt = SystemClock.elapsedRealtime() - tcpStart
+                        }
+                    } catch (e: java.net.ConnectException) {
+                        // RST packet from gateway confirms bidirectional path through tunnel
+                        rtt = SystemClock.elapsedRealtime() - startTime
+                    } catch (_: Exception) {}
+                }
+
+                if (rtt in 1..2500) {
                     _tunnelStats.value = _tunnelStats.value.copy(pingMs = rtt)
                     DebugLogger.v(TAG, "In-tunnel gateway ping to $gatewayIp: ${rtt}ms")
                 }
