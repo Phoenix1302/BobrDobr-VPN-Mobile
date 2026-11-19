@@ -62,8 +62,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -487,9 +491,11 @@ fun DiagnosticsScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Сформировать и отправить дамп (Share Full Dump)",
+                        text = "Сформировать и отправить дамп",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -715,29 +721,28 @@ private fun ComponentSpecRow(
     value: String,
     valueColor: Color
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = 4.dp)
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall.copy(
                 color = TextSecondary,
-                fontSize = 11.5.sp
-            ),
-            modifier = Modifier.weight(1f)
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
         )
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall.copy(
                 color = valueColor,
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp
+                fontSize = 12.sp,
+                lineHeight = 16.sp
             )
         )
     }
@@ -746,9 +751,9 @@ private fun ComponentSpecRow(
 @Composable
 private fun SpecDivider() {
     HorizontalDivider(
-        color = CardBorder.copy(alpha = 0.5f),
+        color = CardBorder.copy(alpha = 0.35f),
         thickness = 1.dp,
-        modifier = Modifier.padding(vertical = 4.dp)
+        modifier = Modifier.padding(vertical = 3.dp)
     )
 }
 
@@ -761,38 +766,23 @@ private fun TerminalLogLine(log: LogEntry) {
         LogLevel.ERROR -> NeonRed
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top
-    ) {
-        Text(
-            text = log.timestamp,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.5.sp,
-            color = TextMuted
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = log.level.tag,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.5.sp,
-            fontWeight = FontWeight.Bold,
-            color = levelColor
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = "[${log.tag}]",
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.5.sp,
-            color = NeonPurple
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = log.message,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.5.sp,
-            color = TextPrimary,
-            modifier = Modifier.weight(1f)
-        )
-    }
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = TextMuted, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace)) {
+                append("${log.timestamp} ")
+            }
+            withStyle(SpanStyle(color = levelColor, fontWeight = FontWeight.Bold, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace)) {
+                append("${log.level.tag} ")
+            }
+            withStyle(SpanStyle(color = NeonPurple, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace)) {
+                append("[${log.tag}] ")
+            }
+            withStyle(SpanStyle(color = TextPrimary, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace)) {
+                append(log.message)
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 1.dp)
+    )
 }

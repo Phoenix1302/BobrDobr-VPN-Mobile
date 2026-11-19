@@ -252,7 +252,7 @@ fun BeaverConnectButton(
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp)
             ) {
                 when {
                     isConnecting -> {
@@ -261,22 +261,24 @@ fun BeaverConnectButton(
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = NeonAmber,
-                                fontSize = 15.sp,
-                                letterSpacing = 0.5.sp
+                                fontSize = 14.sp,
+                                letterSpacing = 0.sp
                             ),
                             maxLines = 1,
-                            softWrap = false
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "УСТАНОВЛЕНИЕ СВЯЗИ",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = NeonAmber.copy(alpha = 0.8f),
-                                fontSize = 9.5.sp,
-                                letterSpacing = 0.5.sp
+                                fontSize = 9.sp,
+                                letterSpacing = 0.3.sp
                             ),
                             maxLines = 1,
-                            softWrap = false
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                     isConnected -> {
@@ -285,23 +287,25 @@ fun BeaverConnectButton(
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = NeonEmerald,
-                                fontSize = 18.sp,
-                                letterSpacing = 1.2.sp
+                                fontSize = 16.sp,
+                                letterSpacing = 0.8.sp
                             ),
                             maxLines = 1,
-                            softWrap = false
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "ЗАЩИЩЕНО",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = NeonEmerald.copy(alpha = 0.85f),
-                                fontSize = 10.5.sp,
-                                letterSpacing = 1.sp,
+                                fontSize = 10.sp,
+                                letterSpacing = 0.8.sp,
                                 fontWeight = FontWeight.Bold
                             ),
                             maxLines = 1,
-                            softWrap = false
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                     else -> {
@@ -310,22 +314,24 @@ fun BeaverConnectButton(
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = TextPrimary,
-                                fontSize = 17.sp,
-                                letterSpacing = 1.sp
+                                fontSize = 15.sp,
+                                letterSpacing = 0.5.sp
                             ),
                             maxLines = 1,
-                            softWrap = false
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "НАЖМИТЕ ДЛЯ ЗАЩИТЫ",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = TextSecondary,
-                                fontSize = 9.5.sp,
-                                letterSpacing = 0.5.sp
+                                fontSize = 9.sp,
+                                letterSpacing = 0.3.sp
                             ),
                             maxLines = 1,
-                            softWrap = false
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                 }

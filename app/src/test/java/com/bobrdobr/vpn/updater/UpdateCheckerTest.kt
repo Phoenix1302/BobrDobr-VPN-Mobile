@@ -102,8 +102,10 @@ class UpdateCheckerTest {
 
     @Test
     fun testPreReleaseComparison() {
-        // Full release 0.8.0 is newer than 0.8.0-prerelease
-        assertTrue(UpdateChecker.isNewerVersion("0.8.0", "0.8.0-prerelease"))
+        // Same base version (e.g. 0.8.0 vs 0.8.0-prerelease) is not an update
+        assertFalse(UpdateChecker.isNewerVersion("0.8.0", "0.8.0-prerelease"))
+        assertFalse(UpdateChecker.isNewerVersion("v0.8.0", "0.8.0-prerelease"))
+        // Genuinely higher versions ARE updates
         assertTrue(UpdateChecker.isNewerVersion("v0.8.1", "0.8.0-prerelease"))
         assertTrue(UpdateChecker.isNewerVersion("v1.0.0", "0.8.0-prerelease"))
 

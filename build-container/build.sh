@@ -45,11 +45,20 @@ if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
     fi
 fi
 
-if [ -f "gradlew" ]; then
+export GRADLE_USER_HOME="${GRADLE_USER_HOME:-/workspace/.gradle}"
+TARGET_TASK="${*:-assembleDebug}"
+
+if command -v gradle >/dev/null 2>&1; then
+    echo ">>> Executing with pre-installed Gradle 8.8: gradle ${TARGET_TASK}..."
+    gradle ${TARGET_TASK} --no-daemon --no-parallel --stacktrace
+elif [ -f "gradlew" ]; then
     chmod +x gradlew
-    TARGET_TASK="${*:-assembleDebug}"
-    echo ">>> Executing: ./gradlew ${TARGET_TASK} --project-cache-dir /tmp/gradle-cache --no-daemon --no-parallel --stacktrace"
-    ./gradlew ${TARGET_TASK} --project-cache-dir /tmp/gradle-cache --no-daemon --no-parallel --stacktrace
+    echo ">>> Executing: ./gradlew ${TARGET_TASK} --no-daemon --no-parallel --stacktrace"
+    ./gradlew ${TARGET_TASK} --no-daemon --no-parallel --stacktrace
+else
+    echo "ERROR: gradle or gradlew not found in /workspace"
+    exit 1
+fi
 
     for apk in app/build/outputs/apk/release/*.apk app/build/outputs/apk/debug/*.apk; do
         if [ -f "$apk" ] && [ -f "build-container/verify-apk-alignment.sh" ]; then
@@ -64,10 +73,6 @@ if [ -f "gradlew" ]; then
             break
         fi
     done
-else
-    echo "ERROR: gradlew script not found in /workspace"
-    exit 1
-fi
 
 echo "=================================================="
 echo "  Build process completed successfully!           "

@@ -44,9 +44,41 @@ data class ServerProfile(
         if (effectiveConfigText.isNullOrBlank() && !rawConfigJson.isNullOrBlank()) {
             try {
                 val json = JSONObject(rawConfigJson)
-                val embedded = json.optString("config_text", "")
-                if (embedded.isNotBlank()) {
-                    effectiveConfigText = embedded
+                for (key in listOf("config_text", "config_content", "config", "configText", "raw_config")) {
+                    val embedded = json.optString(key, "")
+                    if (embedded.isNotBlank()) {
+                        effectiveConfigText = embedded
+                        break
+                    }
+                }
+                if (effectiveConfigText.isNullOrBlank()) {
+                    val privKey = json.optString("private_key", json.optString("privateKey", ""))
+                    val pubKey = json.optString("public_key", json.optString("publicKey", ""))
+                    if (privKey.isNotBlank()) {
+                        val addr = json.optString("address", json.optString("ip", "10.8.0.2/32"))
+                        val ep = json.optString("endpoint", if (serverAddr.isNotBlank()) "$serverAddr:$serverP" else "")
+                        val psk = json.optString("preshared_key", json.optString("presharedKey", ""))
+                        val sb = StringBuilder()
+                        sb.append("[Interface]\n")
+                        sb.append("Address = $addr\n")
+                        sb.append("PrivateKey = $privKey\n")
+                        if (effectiveDns.isNotEmpty()) sb.append("DNS = ${effectiveDns.joinToString(", ")}\n")
+                        if (json.has("jc")) sb.append("Jc = ${json.optInt("jc")}\n")
+                        if (json.has("jmin")) sb.append("Jmin = ${json.optInt("jmin")}\n")
+                        if (json.has("jmax")) sb.append("Jmax = ${json.optInt("jmax")}\n")
+                        if (json.has("s1")) sb.append("S1 = ${json.optInt("s1")}\n")
+                        if (json.has("s2")) sb.append("S2 = ${json.optInt("s2")}\n")
+                        if (json.has("h1")) sb.append("H1 = ${json.optInt("h1")}\n")
+                        if (json.has("h2")) sb.append("H2 = ${json.optInt("h2")}\n")
+                        if (json.has("h3")) sb.append("H3 = ${json.optInt("h3")}\n")
+                        if (json.has("h4")) sb.append("H4 = ${json.optInt("h4")}\n")
+                        sb.append("\n[Peer]\n")
+                        if (pubKey.isNotBlank()) sb.append("PublicKey = $pubKey\n")
+                        if (ep.isNotBlank()) sb.append("Endpoint = $ep\n")
+                        if (psk.isNotBlank()) sb.append("PresharedKey = $psk\n")
+                        sb.append("AllowedIPs = 0.0.0.0/0\n")
+                        effectiveConfigText = sb.toString()
+                    }
                 }
             } catch (_: Exception) {}
         }

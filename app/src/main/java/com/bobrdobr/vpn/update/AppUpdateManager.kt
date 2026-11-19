@@ -369,14 +369,14 @@ class AppUpdateManager private constructor(private val appContext: Context) {
             }
         }
 
-        val clean1 = cleanVersion(v1)
-        val clean2 = cleanVersion(v2)
-        val hasPre1 = clean1.contains("-")
-        val hasPre2 = clean2.contains("-")
+        // When numerical base versions are identical (e.g. 0.8.0 vs 0.8.0-prerelease),
+        // treat them as the same release cycle to avoid spurious update notifications
+        // on installed pre-release test builds.
+        val pre1 = cleanVersion(v1).substringAfter("-", "")
+        val pre2 = cleanVersion(v2).substringAfter("-", "")
 
         return when {
-            !hasPre1 && hasPre2 -> 1
-            hasPre1 && !hasPre2 -> -1
+            pre1.isNotEmpty() && pre2.isNotEmpty() -> pre1.compareTo(pre2)
             else -> 0
         }
     }

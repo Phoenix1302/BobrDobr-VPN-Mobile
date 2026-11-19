@@ -30,6 +30,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +60,14 @@ fun UpdateNotificationBanner(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Auto-dismiss floating toast banner after 4.5 seconds
+    LaunchedEffect(visible, release) {
+        if (visible && release != null) {
+            delay(4500L)
+            onDismiss()
+        }
+    }
+
     AnimatedVisibility(
         visible = visible && release != null,
         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),

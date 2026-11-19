@@ -74,6 +74,11 @@ class VpnTunnelService : VpnService(), SocketProtector {
         private var _currentConfig: TunnelConfig? = null
         val currentConfig: TunnelConfig? get() = _currentConfig
 
+        // Thread-safe in-memory cache for resolved server hostnames -> IPv4
+        private val resolvedIpCache = java.util.concurrent.ConcurrentHashMap<String, String>().apply {
+            put("bobr.netphoenix.ru", "176.108.243.97")
+        }
+
         /**
          * Control whether UI is visible to optimize battery consumption by pausing ping monitoring.
          */
@@ -123,6 +128,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
     private lateinit var engineController: NativeEngineController
 
     private var activeConfig: TunnelConfig? = null
+    private var currentPhysicalNetwork: Network? = null
     private var tunPfd: ParcelFileDescriptor? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pingMonitorJob: Job? = null
@@ -214,6 +220,65 @@ class VpnTunnelService : VpnService(), SocketProtector {
     }
 
     /**
+     * Pre-resolves server domain name into an IPv4 address using the active physical network,
+     * bypassing the TUN interface to prevent DNS resolution deadlocks.
+     */
+    private fun resolvePhysicalServerIp(host: String): String? {
+        if (host.isBlank()) return null
+        if (host.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
+            return host
+        }
+
+        DebugLogger.i(TAG, "Pre-resolving serverAddress '$host' via physical DNS...")
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val activeNet = currentPhysicalNetwork ?: cm?.activeNetwork
+
+        for (attempt in 1..3) {
+            // 1. Try querying DNS explicitly on the underlying physical network
+            try {
+                if (activeNet != null) {
+                    val addrs = activeNet.getAllByName(host)
+                    val ipv4 = addrs.firstOrNull { it is Inet4Address }?.hostAddress
+                    if (!ipv4.isNullOrBlank()) {
+                        DebugLogger.i(TAG, "Pre-resolved '$host' via active physical network -> $ipv4")
+                        resolvedIpCache[host] = ipv4
+                        return ipv4
+                    }
+                }
+            } catch (e: Exception) {
+                DebugLogger.d(TAG, "Pre-resolve attempt $attempt via physical network failed: ${e.message}")
+            }
+
+            // 2. Fallback to standard system DNS resolution
+            try {
+                val addrs = InetAddress.getAllByName(host)
+                val ipv4 = addrs.firstOrNull { it is Inet4Address }?.hostAddress
+                if (!ipv4.isNullOrBlank()) {
+                    DebugLogger.i(TAG, "Pre-resolved '$host' via InetAddress -> $ipv4")
+                    resolvedIpCache[host] = ipv4
+                    return ipv4
+                }
+            } catch (e: Exception) {
+                DebugLogger.d(TAG, "Pre-resolve attempt $attempt via InetAddress failed: ${e.message}")
+            }
+
+            if (attempt < 3) {
+                try { Thread.sleep(200) } catch (_: Exception) {}
+            }
+        }
+
+        // 3. Fallback to cache if network was transitioning
+        val cached = resolvedIpCache[host]
+        if (!cached.isNullOrBlank()) {
+            DebugLogger.w(TAG, "Physical DNS lookup failed for '$host', using cached fallback IP: $cached")
+            return cached
+        }
+
+        DebugLogger.e(TAG, "Failed to resolve IP for host '$host' and no cached IP available")
+        return null
+    }
+
+    /**
      * Creates and configures the Android TUN interface using [VpnService.Builder],
      * detaches the integer file descriptor via [ParcelFileDescriptor.detachFd],
      * and delegates control to [NativeEngineController].
@@ -251,22 +316,14 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
         // Pre-resolve server hostname to IPv4 address BEFORE establish()
         // so native code does not fail when physical DNS queries are captured by TUN
-        val resolvedServerIp = try {
-            if (config.serverAddress.isNotBlank() && !config.serverAddress.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
-                DebugLogger.i(TAG, "Pre-resolving serverAddress '${config.serverAddress}' via physical DNS...")
-                val addrs = InetAddress.getAllByName(config.serverAddress)
-                val ipv4 = addrs.firstOrNull { it is Inet4Address }?.hostAddress
-                if (!ipv4.isNullOrBlank()) {
-                    DebugLogger.i(TAG, "Pre-resolved serverAddress '${config.serverAddress}' -> $ipv4")
-                    ipv4
-                } else {
-                    DebugLogger.w(TAG, "No IPv4 address found for '${config.serverAddress}'")
-                    null
-                }
-            } else null
-        } catch (e: Exception) {
-            DebugLogger.w(TAG, "Could not pre-resolve '${config.serverAddress}': ${e.message}")
-            null
+        val resolvedServerIp = resolvePhysicalServerIp(config.serverAddress)
+        if (resolvedServerIp == null && config.serverAddress.isNotBlank() && !config.serverAddress.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
+            val errMsg = "Не удалось определить IP-адрес сервера '${config.serverAddress}'. Проверьте интернет-соединение."
+            DebugLogger.e(TAG, errMsg)
+            val errState = VpnState.Error(errMsg, config.protocol, -6, IllegalStateException(errMsg))
+            _vpnState.value = errState
+            updateNotification(errState)
+            throw IllegalStateException(errMsg)
         }
 
         // For AmneziaWG: check Endpoint in config.rawConfigJson
@@ -424,6 +481,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 DebugLogger.i(TAG, "Physical network available: $network (handle=${network.networkHandle})")
+                currentPhysicalNetwork = network
                 handleNetworkHandoff(network)
             }
 
@@ -432,12 +490,16 @@ class VpnTunnelService : VpnService(), SocketProtector {
                     capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
                 ) {
                     DebugLogger.d(TAG, "Physical network capabilities changed: $network")
+                    currentPhysicalNetwork = network
                     handleNetworkHandoff(network)
                 }
             }
 
             override fun onLost(network: Network) {
                 DebugLogger.w(TAG, "Physical network lost: $network")
+                if (currentPhysicalNetwork == network) {
+                    currentPhysicalNetwork = null
+                }
             }
         }
 

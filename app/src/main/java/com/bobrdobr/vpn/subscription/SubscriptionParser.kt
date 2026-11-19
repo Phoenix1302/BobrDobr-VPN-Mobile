@@ -240,10 +240,45 @@ object SubscriptionParser {
             )
         } else {
             // AmneziaWG profile
-            val configText = obj.optString("config_text", "")
+            var configText = obj.optString("config_text", "")
+            if (configText.isBlank()) configText = obj.optString("config_content", "")
+            if (configText.isBlank()) configText = obj.optString("config", "")
+            if (configText.isBlank()) configText = obj.optString("configText", "")
+            if (configText.isBlank()) configText = obj.optString("raw_config", "")
+
             var serverAddr = defaultHost
             var serverPort = 51820
             val dnsList = mutableListOf<String>()
+
+            // If configText is blank, attempt to construct AmneziaWG INI from individual JSON fields
+            val privKey = obj.optString("private_key", obj.optString("privateKey", ""))
+            val pubKey = obj.optString("public_key", obj.optString("publicKey", ""))
+            if (configText.isBlank() && privKey.isNotBlank()) {
+                val addr = obj.optString("address", obj.optString("ip", "10.8.0.2/32"))
+                val ep = obj.optString("endpoint", if (serverAddr.isNotBlank()) "$serverAddr:$serverPort" else "")
+                val psk = obj.optString("preshared_key", obj.optString("presharedKey", ""))
+                val dnsVal = obj.optString("dns", "")
+                val sb = StringBuilder()
+                sb.append("[Interface]\n")
+                sb.append("Address = $addr\n")
+                sb.append("PrivateKey = $privKey\n")
+                if (dnsVal.isNotBlank()) sb.append("DNS = $dnsVal\n")
+                if (obj.has("jc")) sb.append("Jc = ${obj.optInt("jc")}\n")
+                if (obj.has("jmin")) sb.append("Jmin = ${obj.optInt("jmin")}\n")
+                if (obj.has("jmax")) sb.append("Jmax = ${obj.optInt("jmax")}\n")
+                if (obj.has("s1")) sb.append("S1 = ${obj.optInt("s1")}\n")
+                if (obj.has("s2")) sb.append("S2 = ${obj.optInt("s2")}\n")
+                if (obj.has("h1")) sb.append("H1 = ${obj.optInt("h1")}\n")
+                if (obj.has("h2")) sb.append("H2 = ${obj.optInt("h2")}\n")
+                if (obj.has("h3")) sb.append("H3 = ${obj.optInt("h3")}\n")
+                if (obj.has("h4")) sb.append("H4 = ${obj.optInt("h4")}\n")
+                sb.append("\n[Peer]\n")
+                if (pubKey.isNotBlank()) sb.append("PublicKey = $pubKey\n")
+                if (ep.isNotBlank()) sb.append("Endpoint = $ep\n")
+                if (psk.isNotBlank()) sb.append("PresharedKey = $psk\n")
+                sb.append("AllowedIPs = 0.0.0.0/0\n")
+                configText = sb.toString()
+            }
 
             if (configText.isNotBlank()) {
                 val validation = ConfigValidator.validateAwg(configText)
