@@ -1,6 +1,7 @@
 package org.bobrdobr.vpn.core.engine
 
 import android.util.Log
+import org.bobrdobr.vpn.core.logger.DebugLogger
 import org.bobrdobr.vpn.core.model.TunnelStats
 import org.bobrdobr.vpn.core.service.SocketProtector
 
@@ -34,11 +35,34 @@ object JniBridge {
         try {
             System.loadLibrary("vpn_core_jni")
             isLibraryLoaded = true
-            Log.i(TAG, "Successfully loaded libvpn_core_jni.so")
+            DebugLogger.i(TAG, "Successfully loaded libvpn_core_jni.so")
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "Failed to load libvpn_core_jni.so: ${e.message}")
+            DebugLogger.e(TAG, "Failed to load libvpn_core_jni.so: ${e.message}", e)
             isLibraryLoaded = false
         }
+    }
+
+    fun statusToString(code: Int): String = when (code) {
+        STATUS_DISCONNECTED -> "DISCONNECTED (0)"
+        STATUS_CONNECTING -> "CONNECTING (1)"
+        STATUS_CONNECTED -> "CONNECTED (2)"
+        STATUS_DISCONNECTING -> "DISCONNECTING (3)"
+        STATUS_RECONNECTING -> "RECONNECTING (4)"
+        STATUS_ERROR -> "ERROR (5)"
+        else -> "UNKNOWN ($code)"
+    }
+
+    fun errorCodeToString(code: Int): String = when (code) {
+        ENGINE_SUCCESS -> "SUCCESS (0)"
+        ENGINE_ERR_GENERIC -> "GENERIC_ERROR (-1)"
+        ENGINE_ERR_INVALID_ARG -> "INVALID_ARGUMENT (-2)"
+        ENGINE_ERR_PROTECT_FAILED -> "PROTECT_SOCKET_FAILED (-3)"
+        ENGINE_ERR_SOCKET_INIT -> "SOCKET_INIT_FAILED (-4)"
+        ENGINE_ERR_HANDSHAKE -> "HANDSHAKE_FAILED (-5)"
+        ENGINE_ERR_INVALID_CONFIG -> "INVALID_CONFIG (-6)"
+        ENGINE_ERR_ALREADY_RUNNING -> "ALREADY_RUNNING (-7)"
+        ENGINE_ERR_NOT_RUNNING -> "NOT_RUNNING (-8)"
+        else -> "UNKNOWN_ERROR ($code)"
     }
 
     /**

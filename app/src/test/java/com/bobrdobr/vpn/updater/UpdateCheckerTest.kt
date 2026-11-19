@@ -97,5 +97,51 @@ class UpdateCheckerTest {
         assertEquals("1.0.0", UpdateChecker.cleanVersion("V1.0.0"))
         assertEquals("1.2.3", UpdateChecker.cleanVersion("  v1.2.3  "))
         assertEquals("1.0.0", UpdateChecker.cleanVersion("1.0.0"))
+        assertEquals("0.8.0-prerelease", UpdateChecker.cleanVersion("v0.8.0-prerelease"))
+    }
+
+    @Test
+    fun testPreReleaseComparison() {
+        // Full release 0.8.0 is newer than 0.8.0-prerelease
+        assertTrue(UpdateChecker.isNewerVersion("0.8.0", "0.8.0-prerelease"))
+        assertTrue(UpdateChecker.isNewerVersion("v0.8.1", "0.8.0-prerelease"))
+        assertTrue(UpdateChecker.isNewerVersion("v1.0.0", "0.8.0-prerelease"))
+
+        // Same prerelease version is not newer
+        assertFalse(UpdateChecker.isNewerVersion("0.8.0-prerelease", "0.8.0-prerelease"))
+
+        // Older version is not newer
+        assertFalse(UpdateChecker.isNewerVersion("0.7.9", "0.8.0-prerelease"))
+        assertFalse(UpdateChecker.isNewerVersion("0.8.0-prerelease", "0.8.0"))
+    }
+
+    @Test
+    fun testParseReleasesArrayWithCustomApkNaming() {
+        val releasesArrayJson = """
+            [
+              {
+                "tag_name": "v0.8.0",
+                "name": "v0.8.0 — Пререлиз БобрДобр VPN Mobile",
+                "body": "Первый публичный пререлиз BobrDobr VPN Mobile v0.8.0",
+                "html_url": "https://github.com/Phoenix1302/BobrDobr-VPN-Mobile/releases/tag/v0.8.0",
+                "draft": false,
+                "prerelease": true,
+                "assets": [
+                  {
+                    "name": "BobrDobr-mobile-0.8.0.apk",
+                    "browser_download_url": "https://github.com/Phoenix1302/BobrDobr-VPN-Mobile/releases/download/v0.8.0/BobrDobr-mobile-0.8.0.apk",
+                    "size": 26275031
+                  }
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val release = UpdateChecker.parseReleaseInfo(releasesArrayJson)
+        assertNotNull(release)
+        assertEquals("v0.8.0", release!!.tagName)
+        assertEquals("0.8.0", release.versionName)
+        assertEquals("BobrDobr-mobile-0.8.0.apk", release.apkDownloadUrl.substringAfterLast("/"))
+        assertEquals(26275031L, release.apkSize)
     }
 }

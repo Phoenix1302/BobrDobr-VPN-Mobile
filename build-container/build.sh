@@ -53,8 +53,14 @@ if [ -f "gradlew" ]; then
 
     for apk in app/build/outputs/apk/release/*.apk app/build/outputs/apk/debug/*.apk; do
         if [ -f "$apk" ] && [ -f "build-container/verify-apk-alignment.sh" ]; then
+            echo ">>> Found generated APK: $apk"
             chmod +x build-container/verify-apk-alignment.sh
             bash build-container/verify-apk-alignment.sh "$apk"
+
+            # If named BobrDobr-mobile-*.apk, also provide app-release.apk copy for backward compatibility
+            if [[ "$apk" == *"/release/BobrDobr-mobile-"* ]]; then
+                cp -f "$apk" "app/build/outputs/apk/release/app-release.apk" 2>/dev/null || true
+            fi
             break
         fi
     done

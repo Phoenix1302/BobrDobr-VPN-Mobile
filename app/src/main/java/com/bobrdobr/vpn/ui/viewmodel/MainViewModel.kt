@@ -26,7 +26,8 @@ enum class NavigationTab(val title: String) {
     SERVERS("Серверы"),
     SUBSCRIPTION("Подписка"),
     SETTINGS("Настройки"),
-    SPLIT_TUNNEL("Раздельное туннелирование")
+    SPLIT_TUNNEL("Раздельное туннелирование"),
+    DIAGNOSTICS("Отладка и диагностика")
 }
 
 class MainViewModel : ViewModel() {

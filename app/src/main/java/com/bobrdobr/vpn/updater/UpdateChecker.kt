@@ -15,6 +15,8 @@ object UpdateChecker {
 
     const val GITHUB_LATEST_RELEASE_URL =
         "https://api.github.com/repos/Phoenix1302/BobrDobr-VPN-Mobile/releases/latest"
+    const val GITHUB_RELEASES_URL =
+        "https://api.github.com/repos/Phoenix1302/BobrDobr-VPN-Mobile/releases"
 
     /**
      * Checks GitHub Releases for a newer version than [currentVersionName].
@@ -40,6 +42,12 @@ object UpdateChecker {
 
             val responseCode = connection.responseCode
             if (responseCode == HttpURLConnection.HTTP_NOT_FOUND) {
+                // /releases/latest returns 404 if only prereleases exist; fallback to full releases list
+                if (apiUrl == GITHUB_LATEST_RELEASE_URL) {
+                    Log.d(TAG, "Latest release returned 404, falling back to all releases list...")
+                    connection.disconnect()
+                    return@withContext checkForUpdate(currentVersionName, GITHUB_RELEASES_URL)
+                }
                 Log.d(TAG, "No releases published yet on repository (404)")
                 return@withContext Result.success(null)
             }
@@ -70,11 +78,19 @@ object UpdateChecker {
     }
 
     /**
-     * Parses the GitHub Release JSON object into a [ReleaseInfo] instance.
+     * Parses the GitHub Release JSON object or array into a [ReleaseInfo] instance.
+     * Supports both single release objects and releases arrays (taking the first release).
      * Returns null if JSON is invalid or no .apk asset is present.
      */
     fun parseReleaseInfo(jsonStr: String): ReleaseInfo? {
-        val root = JSONObject(jsonStr)
+        val trimmed = jsonStr.trim()
+        val root = if (trimmed.startsWith("[")) {
+            val arr = org.json.JSONArray(trimmed)
+            if (arr.length() == 0) return null
+            arr.optJSONObject(0) ?: return null
+        } else {
+            JSONObject(trimmed)
+        }
         val tagName = root.optString("tag_name", "").trim()
         if (tagName.isEmpty()) return null
 
@@ -144,7 +160,18 @@ object UpdateChecker {
                 return num1.compareTo(num2)
             }
         }
-        return 0
+
+        // Numerical components are equal. Follow SemVer: non-prerelease > prerelease
+        val clean1 = cleanVersion(v1)
+        val clean2 = cleanVersion(v2)
+        val hasPre1 = clean1.contains("-")
+        val hasPre2 = clean2.contains("-")
+
+        return when {
+            !hasPre1 && hasPre2 -> 1
+            hasPre1 && !hasPre2 -> -1
+            else -> 0
+        }
     }
 
     /**

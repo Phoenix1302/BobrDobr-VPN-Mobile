@@ -67,7 +67,7 @@ powershell -ExecutionPolicy Bypass -File .\podman-build.ps1 -Task "assembleDebug
 ```
 
 Собранный релизный APK помещается в:
-`app/build/outputs/apk/release/app-release.apk`
+`app/build/outputs/apk/release/BobrDobr-mobile-0.8.0.apk` (также доступна копия `app-release.apk`)
 
 ---
 

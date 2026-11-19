@@ -1,18 +1,17 @@
 package org.bobrdobr.vpn.core.engine
 
-import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.bobrdobr.vpn.core.logger.DebugLogger
 import org.bobrdobr.vpn.core.model.TunnelConfig
 import org.bobrdobr.vpn.core.model.TunnelStats
 import org.bobrdobr.vpn.core.model.VpnProtocol
 import org.bobrdobr.vpn.core.model.VpnState
 import org.bobrdobr.vpn.core.service.SocketProtector
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Controller and orchestrator for pluggable native VPN engines.
@@ -35,7 +34,8 @@ class NativeEngineController(
     private val lock = Any()
 
     private val statusListener = JniBridge.StatusListener { statusCode, message ->
-        Log.i(TAG, "Native status update: code=$statusCode, msg=$message")
+        val statusName = JniBridge.statusToString(statusCode)
+        DebugLogger.i(TAG, "Native status update callback: code=$statusCode ($statusName), message='$message'")
         val currentProtocol = activeConfig?.protocol ?: VpnProtocol.AMNEZIA_WG
         val currentServer = activeConfig?.serverName
 
@@ -64,7 +64,7 @@ class NativeEngineController(
      * @param protector Outer socket protection callback.
      */
     fun startTunnel(config: TunnelConfig, tunFd: Int, protector: SocketProtector): Result<Unit> = synchronized(lock) {
-        Log.i(TAG, "Starting tunnel for protocol: ${config.protocol.displayName} (server: ${config.serverName})")
+        DebugLogger.i(TAG, "startTunnel requested: protocol=${config.protocol.displayName}, server='${config.serverName}', tunFd=$tunFd")
 
         // Stop any currently running engine
         stopInternal()
@@ -72,11 +72,11 @@ class NativeEngineController(
         activeConfig = config
         val engine: IVpnEngine = when (config.protocol) {
             VpnProtocol.AMNEZIA_WG, VpnProtocol.WIREGUARD -> {
-                Log.d(TAG, "Selected RustVpnEngine for ${config.protocol.name}")
+                DebugLogger.i(TAG, "Instantiating RustVpnEngine for ${config.protocol.displayName}")
                 RustVpnEngine(statusListener)
             }
             VpnProtocol.OPENCONNECT -> {
-                Log.d(TAG, "Selected GoVpnEngine for ${config.protocol.name}")
+                DebugLogger.i(TAG, "Instantiating GoVpnEngine for ${config.protocol.displayName}")
                 GoVpnEngine(statusListener)
             }
         }
@@ -85,9 +85,11 @@ class NativeEngineController(
 
         val result = engine.start(tunFd, config.rawConfigJson, protector)
         if (result.isSuccess) {
+            DebugLogger.i(TAG, "Native engine started successfully. Commencing stats polling.")
             startStatsPolling()
         } else {
-            Log.e(TAG, "Failed to start native engine: ${result.exceptionOrNull()?.message}")
+            val err = result.exceptionOrNull()?.message ?: "Unknown engine start failure"
+            DebugLogger.e(TAG, "Failed to start native engine: $err", result.exceptionOrNull())
             activeEngine = null
         }
 
@@ -104,7 +106,7 @@ class NativeEngineController(
     private fun stopInternal(): Result<Unit> {
         stopStatsPolling()
         val engine = activeEngine ?: return Result.success(Unit)
-        Log.i(TAG, "Stopping active engine...")
+        DebugLogger.i(TAG, "Stopping active engine (${engine::class.java.simpleName})...")
         val res = engine.stop()
         activeEngine = null
         activeConfig = null
@@ -116,7 +118,7 @@ class NativeEngineController(
      */
     fun updateNetwork(netId: Long): Result<Unit> = synchronized(lock) {
         val engine = activeEngine ?: return Result.failure(IllegalStateException("No active engine"))
-        Log.i(TAG, "Dispatching updateNetwork(netId=$netId) to engine")
+        DebugLogger.i(TAG, "Dispatching updateNetwork(netId=$netId) to ${engine::class.java.simpleName}")
         return engine.updateNetwork(netId)
     }
 
@@ -138,15 +140,23 @@ class NativeEngineController(
                 val engine = synchronized(lock) { activeEngine } ?: break
                 val rawStats = engine.getStats()
                 val now = System.currentTimeMillis()
-                val dt = (now - prevTime).coerceAtLeast(1)
+                val deltaSec = (now - prevTime) / 1000.0
 
-                val rxSpeed = ((rawStats.rxBytes - prevStats.rxBytes).coerceAtLeast(0) * 1000) / dt
-                val txSpeed = ((rawStats.txBytes - prevStats.txBytes).coerceAtLeast(0) * 1000) / dt
+                val downRate = if (deltaSec > 0 && prevStats.rxBytes > 0 && rawStats.rxBytes >= prevStats.rxBytes) {
+                    ((rawStats.rxBytes - prevStats.rxBytes) / deltaSec).toLong()
+                } else {
+                    0L
+                }
+
+                val upRate = if (deltaSec > 0 && prevStats.txBytes > 0 && rawStats.txBytes >= prevStats.txBytes) {
+                    ((rawStats.txBytes - prevStats.txBytes) / deltaSec).toLong()
+                } else {
+                    0L
+                }
 
                 val computedStats = rawStats.copy(
-                    rxSpeedBytesPerSec = rxSpeed,
-                    txSpeedBytesPerSec = txSpeed,
-                    timestamp = now
+                    rxSpeedBytesPerSec = downRate,
+                    txSpeedBytesPerSec = upRate
                 )
 
                 prevStats = rawStats

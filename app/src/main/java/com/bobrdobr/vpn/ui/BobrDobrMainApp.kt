@@ -41,6 +41,7 @@ import com.bobrdobr.vpn.R
 import com.bobrdobr.vpn.ui.components.UpdateDialog
 import com.bobrdobr.vpn.ui.components.UpdateNotificationBanner
 import com.bobrdobr.vpn.ui.screens.DashboardScreen
+import com.bobrdobr.vpn.ui.screens.DiagnosticsScreen
 import com.bobrdobr.vpn.ui.screens.ServerListScreen
 import com.bobrdobr.vpn.ui.screens.SettingsScreen
 import com.bobrdobr.vpn.ui.screens.SplitTunnelScreen
@@ -115,6 +116,9 @@ fun BobrDobrMainApp(
                     viewModel = viewModel
                 )
                 NavigationTab.SPLIT_TUNNEL -> SplitTunnelScreen(
+                    onBack = { viewModel.setNavigationTab(NavigationTab.SETTINGS) }
+                )
+                NavigationTab.DIAGNOSTICS -> DiagnosticsScreen(
                     onBack = { viewModel.setNavigationTab(NavigationTab.SETTINGS) }
                 )
             }
@@ -245,7 +249,9 @@ private fun BobrDobrBottomBar(
 
             // Tab 4: Settings
             NavigationBarItem(
-                selected = currentTab == NavigationTab.SETTINGS || currentTab == NavigationTab.SPLIT_TUNNEL,
+                selected = currentTab == NavigationTab.SETTINGS ||
+                        currentTab == NavigationTab.SPLIT_TUNNEL ||
+                        currentTab == NavigationTab.DIAGNOSTICS,
                 onClick = { onTabSelected(NavigationTab.SETTINGS) },
                 icon = {
                     Icon(

@@ -47,9 +47,9 @@ class AppUpdateManager private constructor(private val appContext: Context) {
     fun check(isManual: Boolean = false) {
         val currentVersion = try {
             val pInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
-            pInfo.versionName ?: "1.0.0"
+            pInfo.versionName ?: "0.8.0-prerelease"
         } catch (e: Exception) {
-            "1.0.0"
+            "0.8.0-prerelease"
         }
 
         _updateState.value = UpdateState.Checking
