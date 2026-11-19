@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -68,8 +69,28 @@ fun CyberServerCard(
         else -> NeonRed
     }
 
+    val isEmpty = server.serverAddress.isEmpty() || server.id == "empty"
+
+    val targetBorderColor = when {
+        isConnected -> NeonEmerald
+        isEmpty -> CardBorder
+        server.protocol == VpnProtocol.AMNEZIA_WG -> NeonAmber.copy(alpha = 0.55f)
+        server.protocol == VpnProtocol.OPENCONNECT -> NeonCyan.copy(alpha = 0.55f)
+        server.protocol == VpnProtocol.WIREGUARD -> Color(0xFF818CF8).copy(alpha = 0.55f)
+        else -> CardBorder
+    }
+
+    val (glowColor, glowRadius, glowAlpha) = when {
+        isConnected -> Triple(NeonEmerald, 12.dp, 0.3f)
+        isEmpty -> Triple(Color.Transparent, 0.dp, 0f)
+        server.protocol == VpnProtocol.AMNEZIA_WG -> Triple(NeonAmber, 6.dp, 0.2f)
+        server.protocol == VpnProtocol.OPENCONNECT -> Triple(NeonCyan, 6.dp, 0.2f)
+        server.protocol == VpnProtocol.WIREGUARD -> Triple(Color(0xFF818CF8), 6.dp, 0.2f)
+        else -> Triple(Color.Transparent, 0.dp, 0f)
+    }
+
     val animatedBorderColor by animateColorAsState(
-        targetValue = if (isConnected) NeonEmerald else CardBorderActive.copy(alpha = 0.5f),
+        targetValue = targetBorderColor,
         animationSpec = tween(300),
         label = "card_border"
     )
@@ -77,10 +98,14 @@ fun CyberServerCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .neonGlow(
-                color = if (isConnected) NeonEmerald else NeonCyan,
-                radius = if (isConnected) 12.dp else 6.dp,
-                alpha = if (isConnected) 0.3f else 0.15f
+            .then(
+                if (glowAlpha > 0f) {
+                    Modifier.neonGlow(
+                        color = glowColor,
+                        radius = glowRadius,
+                        alpha = glowAlpha
+                    )
+                } else Modifier
             )
             .clip(RoundedCornerShape(20.dp))
             .background(if (isConnected) BackgroundCardActive else BackgroundCard)
@@ -136,7 +161,7 @@ fun CyberServerCard(
                 } else {
                     val (protocolIcon, protocolColor) = when (server.protocol) {
                         VpnProtocol.AMNEZIA_WG -> Pair(R.drawable.ic_amnezia, NeonAmber)
-                        VpnProtocol.WIREGUARD -> Pair(R.drawable.ic_amnezia, NeonCyan)
+                        VpnProtocol.WIREGUARD -> Pair(R.drawable.ic_amnezia, Color(0xFF818CF8))
                         VpnProtocol.OPENCONNECT -> Pair(R.drawable.ic_openconnect, NeonCyan)
                     }
 
@@ -230,16 +255,17 @@ fun CyberServerCard(
 fun ProtocolBadge(protocol: VpnProtocol, modifier: Modifier = Modifier) {
     val (badgeColor, label) = when (protocol) {
         VpnProtocol.AMNEZIA_WG -> Pair(NeonAmber, "AmneziaWG")
-        VpnProtocol.WIREGUARD -> Pair(NeonCyan, "WireGuard")
+        VpnProtocol.WIREGUARD -> Pair(Color(0xFF818CF8), "WireGuard")
         VpnProtocol.OPENCONNECT -> Pair(NeonCyan, "OpenConnect")
     }
 
     Box(
         modifier = modifier
+            .wrapContentWidth()
             .clip(RoundedCornerShape(6.dp))
             .background(badgeColor.copy(alpha = 0.15f))
             .border(0.5.dp, badgeColor.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .padding(horizontal = 7.dp, vertical = 2.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -248,7 +274,9 @@ fun ProtocolBadge(protocol: VpnProtocol, modifier: Modifier = Modifier) {
                 color = badgeColor,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.sp
-            )
+            ),
+            maxLines = 1,
+            softWrap = false
         )
     }
 }

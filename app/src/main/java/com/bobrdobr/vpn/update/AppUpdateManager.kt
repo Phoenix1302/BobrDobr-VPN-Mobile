@@ -53,8 +53,8 @@ class AppUpdateManager private constructor(private val appContext: Context) {
 
     companion object {
         private const val TAG = "AppUpdateManager"
-        const val CURRENT_VERSION_NAME = "0.8.1-prerelease"
-        const val CURRENT_VERSION_CODE = 82
+        const val CURRENT_VERSION_NAME = "0.8.2-prerelease"
+        const val CURRENT_VERSION_CODE = 83
         const val GITHUB_REPO_URL = "https://github.com/Phoenix1302/BobrDobr-VPN-Mobile"
         const val AUTHOR_PROFILE_URL = "https://github.com/Phoenix1302"
 
@@ -116,11 +116,42 @@ class AppUpdateManager private constructor(private val appContext: Context) {
         data class Failed(val error: String) : ManualCheckResult()
     }
 
+    init {
+        cleanOldApks()
+    }
+
+    /**
+     * Cleans up leftover update APKs from previous updates in internal cache and files dirs.
+     * Optionally preserves [keepFile] (e.g. freshly downloaded release ready to install).
+     */
+    fun cleanOldApks(keepFile: File? = null) {
+        val targetDirs = listOf(
+            File(appContext.cacheDir, "updates"),
+            File(appContext.filesDir, "updates")
+        )
+        for (dir in targetDirs) {
+            if (!dir.exists() || !dir.isDirectory) continue
+            try {
+                dir.listFiles()?.forEach { file ->
+                    if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
+                        if (keepFile == null || file.absolutePath != keepFile.absolutePath) {
+                            val deleted = file.delete()
+                            Log.i(TAG, "Cleaned up old update APK: ${file.name} (success=$deleted)")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error cleaning update directory '${dir.absolutePath}': ${e.message}")
+            }
+        }
+    }
+
     fun check(isManual: Boolean = false) {
         if (_updateState.value is UpdateState.Checking || _updateState.value is UpdateState.Downloading) {
             return
         }
 
+        cleanOldApks()
         _updateState.value = UpdateState.Checking
 
         scope.launch {
@@ -297,6 +328,8 @@ class AppUpdateManager private constructor(private val appContext: Context) {
     }
 
     private fun downloadApk(release: GitHubRelease): File {
+        cleanOldApks()
+
         val updatesDir = File(appContext.cacheDir, "updates")
         if (!updatesDir.exists()) {
             updatesDir.mkdirs()

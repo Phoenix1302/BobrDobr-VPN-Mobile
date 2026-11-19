@@ -38,7 +38,7 @@ object DiagnosticDumpManager {
         sb.appendLine("           BOBRDOBR VPN MOBILE - DIAGNOSTIC SYSTEM DUMP REPORT                  ")
         sb.appendLine("================================================================================")
         sb.appendLine("Timestamp:              $now")
-        sb.appendLine("Client Version:         BobrDobr VPN Mobile v0.8.1-prerelease (Build 82)")
+        sb.appendLine("Client Version:         BobrDobr VPN Mobile v0.8.2-prerelease (Build 83)")
         sb.appendLine("Target SDK:             35 (Android 15 Ready) / Min SDK: 26")
         sb.appendLine("UI Framework:           Jetpack Compose BOM 2024.12.01 / Material 3")
         sb.appendLine("Kotlin Runtime:         2.1.0")
@@ -103,7 +103,7 @@ object DiagnosticDumpManager {
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, "BobrDobr VPN Diagnostic Dump ($timestamp)")
-                putExtra(Intent.EXTRA_TEXT, "Диагностический дамп BobrDobr VPN Mobile v0.8.1-prerelease\nФайл прикреплен.")
+                putExtra(Intent.EXTRA_TEXT, "Диагностический дамп BobrDobr VPN Mobile v0.8.2-prerelease\nФайл прикреплен.")
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }

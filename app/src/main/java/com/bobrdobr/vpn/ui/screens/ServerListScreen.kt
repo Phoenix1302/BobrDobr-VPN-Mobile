@@ -672,24 +672,24 @@ private fun AddServerDialog(
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = AmneziaWG, 1 = OpenConnect
 
     // AmneziaWG State
-    var awgName by remember { mutableStateOf("Мой AmneziaWG Шлюз") }
+    var awgName by remember { mutableStateOf("") }
     var awgConfigText by remember { mutableStateOf("") }
     val awgValidation = remember(awgConfigText) { ConfigValidator.validateAwg(awgConfigText) }
 
     // OpenConnect State
-    var ocName by remember { mutableStateOf("Мой OpenConnect Шлюз") }
+    var ocName by remember { mutableStateOf("") }
     var ocHost by remember { mutableStateOf("") }
-    var ocPort by remember { mutableStateOf("443") }
-    var ocSecret by remember { mutableStateOf("split") }
+    var ocPort by remember { mutableStateOf("") }
+    var ocSecret by remember { mutableStateOf("") }
     var ocUsername by remember { mutableStateOf("") }
     var ocPassword by remember { mutableStateOf("") }
     val ocValidation = remember(ocHost, ocPort, ocUsername, ocPassword, ocSecret) {
         ConfigValidator.validateOcserv(
             host = ocHost,
-            port = ocPort.toIntOrNull() ?: 0,
+            port = ocPort.toIntOrNull() ?: 443,
             username = ocUsername,
             password = ocPassword,
-            group = ocSecret
+            group = ocSecret.ifBlank { "split" }
         )
     }
 
@@ -853,6 +853,7 @@ private fun AddServerDialog(
                         value = awgName,
                         onValueChange = { awgName = it },
                         label = { Text("Название шлюза") },
+                        placeholder = { Text("Мой AmneziaWG Шлюз", color = TextMuted, fontSize = 13.sp) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         colors = outlinedColors()
@@ -898,7 +899,7 @@ private fun AddServerDialog(
                         value = awgConfigText,
                         onValueChange = { awgConfigText = it },
                         label = { Text("Текст конфигурации WireGuard / AWG") },
-                        placeholder = { Text("[Interface]\nPrivateKey = ...\nAddress = ...\nDNS = 10.8.0.1\n\n[Peer]\nPublicKey = ...\nEndpoint = ...") },
+                        placeholder = { Text("[Interface]\nPrivateKey = ...\nAddress = ...\nDNS = 10.8.0.1\n\n[Peer]\nPublicKey = ...\nEndpoint = ...", color = TextMuted, fontSize = 13.sp) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(130.dp),
@@ -916,6 +917,7 @@ private fun AddServerDialog(
                         value = ocName,
                         onValueChange = { ocName = it },
                         label = { Text("Название шлюза") },
+                        placeholder = { Text("Мой OpenConnect Шлюз", color = TextMuted, fontSize = 13.sp) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         colors = outlinedColors()
@@ -928,7 +930,7 @@ private fun AddServerDialog(
                             value = ocHost,
                             onValueChange = { ocHost = it },
                             label = { Text("Сервер / IP") },
-                            placeholder = { Text("vpn.example.com") },
+                            placeholder = { Text("vpn.example.com", color = TextMuted, fontSize = 13.sp) },
                             modifier = Modifier.weight(2f),
                             singleLine = true,
                             colors = outlinedColors()
@@ -937,6 +939,7 @@ private fun AddServerDialog(
                             value = ocPort,
                             onValueChange = { ocPort = it },
                             label = { Text("Порт") },
+                            placeholder = { Text("443", color = TextMuted, fontSize = 13.sp) },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             colors = outlinedColors()
@@ -949,7 +952,7 @@ private fun AddServerDialog(
                         value = ocSecret,
                         onValueChange = { ocSecret = it },
                         label = { Text("Секрет камуфляжа сервера (?secret)") },
-                        placeholder = { Text("split") },
+                        placeholder = { Text("split", color = TextMuted, fontSize = 13.sp) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         colors = outlinedColors()
@@ -961,6 +964,7 @@ private fun AddServerDialog(
                         value = ocUsername,
                         onValueChange = { ocUsername = it },
                         label = { Text("Имя пользователя / Логин") },
+                        placeholder = { Text("user", color = TextMuted, fontSize = 13.sp) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         colors = outlinedColors()
@@ -972,6 +976,7 @@ private fun AddServerDialog(
                         value = ocPassword,
                         onValueChange = { ocPassword = it },
                         label = { Text("Пароль") },
+                        placeholder = { Text("••••••••", color = TextMuted, fontSize = 13.sp) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         colors = outlinedColors()
@@ -1012,6 +1017,7 @@ private fun AddServerDialog(
                         onAddServer(newServer)
                     } else if (selectedTab == 1 && ocValidation is ValidationResult.SuccessOcserv) {
                         val v = ocValidation
+                        val secretVal = ocSecret.ifBlank { "split" }
                         val newServer = ServerProfile(
                             id = "custom-oc-${System.currentTimeMillis()}",
                             name = ocName.ifBlank { "Мой OpenConnect" },
@@ -1023,8 +1029,8 @@ private fun AddServerDialog(
                             serverPort = v.port,
                             username = v.username,
                             password = ocPassword,
-                            group = ocSecret,
-                            secret = ocSecret,
+                            group = secretVal,
+                            secret = secretVal,
                             isCustom = true,
                             rawConfigJson = org.json.JSONObject().apply {
                                 put("protocol", "OPENCONNECT")
@@ -1032,8 +1038,8 @@ private fun AddServerDialog(
                                 put("port", v.port)
                                 put("username", v.username)
                                 put("password", ocPassword)
-                                put("group", ocSecret)
-                                put("secret", ocSecret)
+                                put("group", secretVal)
+                                put("secret", secretVal)
                             }.toString()
                         )
                         onAddServer(newServer)
@@ -1161,5 +1167,7 @@ private fun outlinedColors() = OutlinedTextFieldDefaults.colors(
     focusedTextColor = TextPrimary,
     unfocusedTextColor = TextPrimary,
     focusedLabelColor = NeonCyan,
-    unfocusedLabelColor = TextSecondary
+    unfocusedLabelColor = TextSecondary,
+    focusedPlaceholderColor = TextMuted,
+    unfocusedPlaceholderColor = TextMuted
 )

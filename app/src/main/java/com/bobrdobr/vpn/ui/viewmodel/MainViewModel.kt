@@ -2,6 +2,7 @@ package com.bobrdobr.vpn.ui.viewmodel
 
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.VpnService
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
@@ -33,6 +34,11 @@ enum class NavigationTab(val title: String) {
 class MainViewModel : ViewModel() {
 
     companion object {
+        const val PREFS_NAME = "bobrdobr_vpn_prefs"
+        const val KEY_BYPASS_ENABLED = "key_bypass_enabled"
+        const val KEY_BYPASS_SUBNETS = "key_bypass_subnets"
+        const val DEFAULT_BYPASS_SUBNETS = "192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 169.254.0.0/16"
+
         val EMPTY_SERVER = ServerProfile(
             id = "none",
             name = "Шлюз не выбран",
@@ -69,8 +75,14 @@ class MainViewModel : ViewModel() {
     private val _autoConnectEnabled = MutableStateFlow(false)
     val autoConnectEnabled: StateFlow<Boolean> = _autoConnectEnabled.asStateFlow()
 
-    private val _bypassLocalEnabled = MutableStateFlow(true)
-    val bypassLocalEnabled: StateFlow<Boolean> = _bypassLocalEnabled.asStateFlow()
+    private var prefs: SharedPreferences? = null
+
+    private val _bypassEnabled = MutableStateFlow(true)
+    val bypassEnabled: StateFlow<Boolean> = _bypassEnabled.asStateFlow()
+    val bypassLocalEnabled: StateFlow<Boolean> get() = bypassEnabled
+
+    private val _bypassSubnets = MutableStateFlow(DEFAULT_BYPASS_SUBNETS)
+    val bypassSubnets: StateFlow<String> = _bypassSubnets.asStateFlow()
 
     private val _selectedDns = MutableStateFlow("DNS из конфигурации туннеля (по умолчанию)")
     val selectedDns: StateFlow<String> = _selectedDns.asStateFlow()
@@ -85,6 +97,12 @@ class MainViewModel : ViewModel() {
     private var isRepoInitialized = false
 
     fun initRepository(context: Context) {
+        if (!isRepoInitialized) {
+            val p = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs = p
+            _bypassEnabled.value = p.getBoolean(KEY_BYPASS_ENABLED, true)
+            _bypassSubnets.value = p.getString(KEY_BYPASS_SUBNETS, DEFAULT_BYPASS_SUBNETS) ?: DEFAULT_BYPASS_SUBNETS
+        }
         if (isRepoInitialized) return
         isRepoInitialized = true
         val repo = ServerRepository.getInstance(context)
@@ -135,8 +153,18 @@ class MainViewModel : ViewModel() {
         _autoConnectEnabled.value = enabled
     }
 
+    fun toggleBypass(enabled: Boolean) {
+        _bypassEnabled.value = enabled
+        prefs?.edit()?.putBoolean(KEY_BYPASS_ENABLED, enabled)?.apply()
+    }
+
     fun toggleBypassLocal(enabled: Boolean) {
-        _bypassLocalEnabled.value = enabled
+        toggleBypass(enabled)
+    }
+
+    fun setBypassSubnets(subnets: String) {
+        _bypassSubnets.value = subnets
+        prefs?.edit()?.putString(KEY_BYPASS_SUBNETS, subnets)?.apply()
     }
 
     fun setDns(dns: String) {
@@ -182,9 +210,13 @@ class MainViewModel : ViewModel() {
         // 1. Apply Per-App Split Tunneling (Whitelist / Blacklist)
         config = splitManager.applyToConfig(config)
 
-        // 2. Apply CIDR routing with local network (RFC1918) bypass if enabled
-        if (_bypassLocalEnabled.value) {
-            val routes = CidrUtils.buildTunnelRoutes(bypassLocal = true)
+        // 2. Apply CIDR routing with Bypass mode (custom excluded subnets) if enabled
+        if (_bypassEnabled.value) {
+            val rawSubnets = _bypassSubnets.value
+            val parsedList = rawSubnets.split(',', ';', '\n', ' ')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            val routes = CidrUtils.buildTunnelRoutes(bypassLocal = false, customExcludes = parsedList)
             config = config.copy(routes = routes)
         }
 

@@ -28,7 +28,7 @@ import java.util.TimeZone
 object DiagnosticDumpManager {
 
     private const val TAG = "DiagnosticDumpManager"
-    const val APP_VERSION_NAME = "0.8.1-prerelease"
+    const val APP_VERSION_NAME = "0.8.2-prerelease"
     const val APP_VERSION_CODE = 80
 
     /**

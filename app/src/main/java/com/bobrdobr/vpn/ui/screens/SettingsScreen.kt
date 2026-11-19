@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -32,13 +33,22 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -84,7 +94,8 @@ fun SettingsScreen(
     val context = LocalContext.current
     val killSwitchEnabled by viewModel.killSwitchEnabled.collectAsStateWithLifecycle()
     val autoConnectEnabled by viewModel.autoConnectEnabled.collectAsStateWithLifecycle()
-    val bypassLocalEnabled by viewModel.bypassLocalEnabled.collectAsStateWithLifecycle()
+    val bypassEnabled by viewModel.bypassEnabled.collectAsStateWithLifecycle()
+    val bypassSubnets by viewModel.bypassSubnets.collectAsStateWithLifecycle()
     val splitManager = remember { SplitTunnelManager.getInstance(context) }
     val splitEnabled by splitManager.isEnabled.collectAsStateWithLifecycle()
     val selectedApps by splitManager.selectedApps.collectAsStateWithLifecycle()
@@ -92,12 +103,13 @@ fun SettingsScreen(
     val updateManager = remember { AppUpdateManager.getInstance(context) }
     val updateState by updateManager.updateState.collectAsStateWithLifecycle()
     var showUpdateDialog by remember { mutableStateOf(false) }
+    var showBypassDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         updateManager.manualCheckEvent.collect { result ->
             when (result) {
                 is AppUpdateManager.ManualCheckResult.UpToDate -> {
-                    Toast.makeText(context, "У вас установлена последняя версия (v0.8.1-prerelease)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "У вас установлена последняя версия (v0.8.2-prerelease)", Toast.LENGTH_SHORT).show()
                 }
                 is AppUpdateManager.ManualCheckResult.Available -> {
                     showUpdateDialog = true
@@ -177,13 +189,17 @@ fun SettingsScreen(
         SettingsSectionHeader(title = "СЕТЕВАЯ МАРШРУТИЗАЦИЯ")
 
         SettingsCard {
-            SettingsToggleItem(
-                icon = Icons.Default.Security,
-                title = "Обход локальной сети (Bypass LAN)",
-                description = "Исключить 192.168.0.0/16, 10.0.0.0/8 (доступ к принтерам и NAS)",
-                checked = bypassLocalEnabled,
-                onCheckedChange = { viewModel.toggleBypassLocal(it) },
-                iconColor = NeonCyan
+            val subnetsList = remember(bypassSubnets) {
+                bypassSubnets.split(',', ';', '\n', ' ')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") }
+            }
+
+            SettingsBypassItem(
+                checked = bypassEnabled,
+                onCheckedChange = { viewModel.toggleBypass(it) },
+                subnetsCount = subnetsList.size,
+                onClick = { showBypassDialog = true }
             )
         }
 
@@ -196,9 +212,9 @@ fun SettingsScreen(
             SettingsActionItem(
                 icon = Icons.Default.Info,
                 title = "БобрДобр VPN Mobile",
-                description = "v0.8.1-prerelease (Сборка 82) • Android ARM64 • x86_64",
+                description = "v0.8.2-prerelease (Сборка 83) • Android ARM64 • x86_64",
                 iconColor = NeonCyan,
-                badge = "v0.8.1",
+                badge = "v0.8.2",
                 onClick = {
                     viewModel.setNavigationTab(com.bobrdobr.vpn.ui.viewmodel.NavigationTab.DIAGNOSTICS)
                 }
@@ -282,6 +298,17 @@ fun SettingsScreen(
             onDismiss = { showUpdateDialog = false },
             onDownloadAndInstall = { rel ->
                 updateManager.downloadAndInstall(rel)
+            }
+        )
+    }
+
+    if (showBypassDialog) {
+        BypassSubnetsDialog(
+            initialSubnets = bypassSubnets,
+            onDismiss = { showBypassDialog = false },
+            onSave = { newSubnets ->
+                viewModel.setBypassSubnets(newSubnets)
+                showBypassDialog = false
             }
         )
     }
@@ -576,4 +603,200 @@ private fun SettingsUpdateItem(
             )
         }
     }
+}
+
+@Composable
+private fun SettingsBypassItem(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    subnetsCount: Int,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(NeonCyan.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Security,
+                    contentDescription = null,
+                    tint = NeonCyan,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column {
+                Text(
+                    text = "Режим Bypass (Исключение подсетей)",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary,
+                        fontSize = 14.sp
+                    )
+                )
+                Text(
+                    text = if (checked) {
+                        "Исключено подсетей: $subnetsCount (нажмите для настройки)"
+                    } else {
+                        "Трафик к указанным подсетям идет в обход VPN (выключено)"
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = BackgroundMain,
+                    checkedTrackColor = NeonEmerald,
+                    uncheckedThumbColor = TextMuted,
+                    uncheckedTrackColor = BackgroundCardActive
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun BypassSubnetsDialog(
+    initialSubnets: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var subnetsText by remember { mutableStateOf(initialSubnets) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = NeonCyan,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Настройка подсетей Bypass",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp
+                    )
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(imageVector = Icons.Default.Close, contentDescription = "Закрыть", tint = TextSecondary)
+                }
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Укажите IP-адреса и подсети в формате CIDR (по одной на строку), к которым трафик должен направляться напрямую в обход VPN-туннеля:",
+                    style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 12.sp)
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = subnetsText,
+                    onValueChange = { subnetsText = it },
+                    placeholder = {
+                        Text(
+                            "192.168.0.0/16\n10.0.0.0/8\n172.16.0.0/12",
+                            color = TextMuted,
+                            fontSize = 13.sp
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = BackgroundCardActive,
+                        unfocusedContainerColor = BackgroundCardActive,
+                        focusedBorderColor = NeonCyan,
+                        unfocusedBorderColor = CardBorder,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Quick Action Buttons: RFC1918 default & Clear
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val rfc1918 = "10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16\n169.254.0.0/16"
+                            subnetsText = if (subnetsText.isBlank()) rfc1918 else "$subnetsText\n$rfc1918"
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Text("Локальная сеть (RFC1918)", fontSize = 11.sp, maxLines = 1)
+                    }
+
+                    OutlinedButton(
+                        onClick = { subnetsText = "" },
+                        modifier = Modifier.weight(0.5f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonRed),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Text("Очистить", fontSize = 11.sp, maxLines = 1)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(subnetsText) },
+                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan, contentColor = BackgroundMain),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Сохранить", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена", color = TextSecondary)
+            }
+        },
+        containerColor = BackgroundCard,
+        shape = RoundedCornerShape(18.dp)
+    )
 }

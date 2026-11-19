@@ -15,8 +15,8 @@ android {
         applicationId = "com.bobrdobr.vpn"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 82
-        versionName = "0.8.1-prerelease"
+        versionCode = 83
+        versionName = "0.8.2-prerelease"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -28,9 +28,9 @@ android {
         outputs.all {
             if (this is com.android.build.gradle.internal.api.BaseVariantOutputImpl) {
                 outputFileName = if (buildType.name == "release") {
-                    "BobrDobr-mobile-0.8.1.apk"
+                    "BobrDobr-mobile-0.8.2.apk"
                 } else {
-                    "BobrDobr-mobile-0.8.1-debug.apk"
+                    "BobrDobr-mobile-0.8.2-debug.apk"
                 }
             }
         }
