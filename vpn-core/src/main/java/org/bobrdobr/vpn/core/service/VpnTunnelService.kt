@@ -130,6 +130,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
     private var activeConfig: TunnelConfig? = null
     private var currentPhysicalNetwork: Network? = null
     private var tunPfd: ParcelFileDescriptor? = null
+    private var activeTunRawFd: Int = -1
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pingMonitorJob: Job? = null
 
@@ -428,6 +429,9 @@ class VpnTunnelService : VpnService(), SocketProtector {
             setBlocking(false)
         }
 
+        // Ensure any previously lingering TUN interface is thoroughly torn down
+        closeTunResources()
+
         DebugLogger.i(TAG, "Invoking VpnService.Builder.establish()...")
         val pfd = builder.establish()
             ?: run {
@@ -438,8 +442,9 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
         tunPfd = pfd
 
-        // Detach integer fd for native engine ownership
+        // Detach integer fd for native engine ownership and track it for guaranteed cleanup
         val rawFd = pfd.detachFd()
+        activeTunRawFd = rawFd
         DebugLogger.i(TAG, "Successfully captured TUN file descriptor: $rawFd")
 
         // Launch native engine
@@ -447,6 +452,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
         if (startResult.isFailure) {
             val err = startResult.exceptionOrNull()?.message ?: "Native engine failed to start"
             DebugLogger.e(TAG, "engineController.startTunnel failed: $err")
+            closeTunResources()
             throw IllegalStateException(err)
         }
 
@@ -521,6 +527,31 @@ class VpnTunnelService : VpnService(), SocketProtector {
         }
     }
 
+    /**
+     * Closes the raw detached TUN file descriptor and releases ParcelFileDescriptor.
+     * This signals the Linux kernel to immediately remove the virtual tunX network interface.
+     */
+    private fun closeTunResources() {
+        val fd = activeTunRawFd
+        activeTunRawFd = -1
+        if (fd >= 0) {
+            try {
+                // Adopting the detached fd and closing it triggers the POSIX close(fd) syscall on /dev/tun
+                ParcelFileDescriptor.adoptFd(fd).close()
+                DebugLogger.i(TAG, "Successfully adopted and closed raw TUN fd=$fd")
+            } catch (e: Exception) {
+                DebugLogger.w(TAG, "Error closing adopted raw TUN fd=$fd: ${e.message}")
+            }
+        }
+
+        try {
+            tunPfd?.close()
+        } catch (e: Exception) {
+            DebugLogger.w(TAG, "Error closing ParcelFileDescriptor: ${e.message}")
+        }
+        tunPfd = null
+    }
+
     private fun stopTunnelGracefully() {
         DebugLogger.i(TAG, "stopTunnelGracefully: tearing down session")
         stopPingMonitor()
@@ -535,12 +566,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
                 DebugLogger.w(TAG, "Error stopping native engine: ${e.message}", e)
             }
 
-            try {
-                tunPfd?.close()
-            } catch (e: Exception) {
-                DebugLogger.w(TAG, "Error closing ParcelFileDescriptor: ${e.message}", e)
-            }
-            tunPfd = null
+            closeTunResources()
             activeConfig = null
 
             _vpnState.value = VpnState.Disconnected
@@ -565,13 +591,13 @@ class VpnTunnelService : VpnService(), SocketProtector {
             DebugLogger.w(TAG, "Error unregistering network callback: ${e.message}", e)
         }
 
-        engineController.stopTunnel()
-
         try {
-            tunPfd?.close()
+            engineController.stopTunnel()
         } catch (e: Exception) {
-            DebugLogger.w(TAG, "Error closing ParcelFileDescriptor in onDestroy: ${e.message}", e)
+            DebugLogger.w(TAG, "Error stopping native engine in onDestroy: ${e.message}")
         }
+
+        closeTunResources()
 
         _currentConfig = null
         _vpnState.value = VpnState.Disconnected
