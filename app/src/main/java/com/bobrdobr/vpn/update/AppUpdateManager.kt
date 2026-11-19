@@ -3,7 +3,6 @@ package com.bobrdobr.vpn.update
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.util.Log
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +16,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -30,7 +30,8 @@ data class GitHubRelease(
     val changelog: String,
     val htmlUrl: String,
     val downloadUrl: String,
-    val apkSize: Long
+    val apkSize: Long,
+    val isPrerelease: Boolean = false
 )
 
 sealed class UpdateState {
@@ -52,10 +53,15 @@ class AppUpdateManager private constructor(private val appContext: Context) {
 
     companion object {
         private const val TAG = "AppUpdateManager"
-        const val CURRENT_VERSION_NAME = "0.8.0"
+        const val CURRENT_VERSION_NAME = "0.8.0-prerelease"
         const val CURRENT_VERSION_CODE = 80
         const val GITHUB_REPO_URL = "https://github.com/Phoenix1302/BobrDobr-VPN-Mobile"
         const val AUTHOR_PROFILE_URL = "https://github.com/Phoenix1302"
+
+        private const val PREFS_NAME = "bobrdobr_update_prefs"
+        private const val KEY_INCLUDE_PRERELEASES = "key_include_prereleases"
+        private const val GITHUB_RELEASES_API =
+            "https://api.github.com/repos/Phoenix1302/BobrDobr-VPN-Mobile/releases"
         private const val LATEST_RELEASE_API =
             "https://api.github.com/repos/Phoenix1302/BobrDobr-VPN-Mobile/releases/latest"
 
@@ -70,6 +76,32 @@ class AppUpdateManager private constructor(private val appContext: Context) {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private fun detectDefaultIncludePrereleases(): Boolean {
+        val v = CURRENT_VERSION_NAME.lowercase()
+        return v.contains("pre") || v.contains("beta") || v.contains("alpha") || v.contains("rc") || v.contains("-")
+    }
+
+    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private val _includePrereleases = MutableStateFlow(
+        if (prefs.contains(KEY_INCLUDE_PRERELEASES)) {
+            prefs.getBoolean(KEY_INCLUDE_PRERELEASES, false)
+        } else {
+            detectDefaultIncludePrereleases()
+        }
+    )
+    val includePrereleases: StateFlow<Boolean> = _includePrereleases.asStateFlow()
+
+    fun setIncludePrereleases(enabled: Boolean) {
+        _includePrereleases.value = enabled
+        try {
+            prefs.edit().putBoolean(KEY_INCLUDE_PRERELEASES, enabled).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist includePrereleases: ${e.message}")
+        }
+        check(isManual = false)
+    }
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
@@ -98,45 +130,40 @@ class AppUpdateManager private constructor(private val appContext: Context) {
                 }
 
                 if (release != null && isNewerVersion(release.version, CURRENT_VERSION_NAME)) {
+                    Log.i(TAG, "Update available: ${release.tagName} (prerelease=${release.isPrerelease})")
                     _updateState.value = UpdateState.UpdateAvailable(release)
                     if (isManual) {
-                        _manualCheckEvent.tryEmit(ManualCheckResult.Available(release))
+                        _manualCheckEvent.emit(ManualCheckResult.Available(release))
                     }
                 } else {
+                    Log.i(TAG, "App is up to date (current=$CURRENT_VERSION_NAME, channelPrereleases=${_includePrereleases.value})")
                     _updateState.value = UpdateState.UpToDate
                     if (isManual) {
-                        _manualCheckEvent.tryEmit(ManualCheckResult.UpToDate)
+                        _manualCheckEvent.emit(ManualCheckResult.UpToDate)
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Update check failed: ${e.message}")
-                val errorMsg = e.message ?: "Сбой проверки обновлений"
-                _updateState.value = UpdateState.Error(errorMsg)
+                Log.e(TAG, "Update check failed: ${e.message}", e)
+                val errMsg = e.message ?: "Не удалось проверить обновления"
+                _updateState.value = UpdateState.Error(errMsg)
                 if (isManual) {
-                    _manualCheckEvent.tryEmit(ManualCheckResult.Failed(errorMsg))
+                    _manualCheckEvent.emit(ManualCheckResult.Failed(errMsg))
                 }
             }
         }
     }
 
-    fun dismissUpdate() {
-        if (_updateState.value is UpdateState.UpdateAvailable ||
-            _updateState.value is UpdateState.UpToDate ||
-            _updateState.value is UpdateState.Error
-        ) {
-            _updateState.value = UpdateState.Idle
-        }
-    }
-
     fun downloadAndInstall(release: GitHubRelease) {
-        if (_updateState.value is UpdateState.Downloading) return
+        if (_updateState.value is UpdateState.Downloading) {
+            return
+        }
 
         scope.launch {
             try {
                 _updateState.value = UpdateState.Downloading(
                     release = release,
                     progressPercent = 0,
-                    downloadedBytes = 0,
+                    downloadedBytes = 0L,
                     totalBytes = release.apkSize
                 )
 
@@ -172,11 +199,11 @@ class AppUpdateManager private constructor(private val appContext: Context) {
     }
 
     private fun fetchLatestRelease(): GitHubRelease? {
-        val url = URL(LATEST_RELEASE_API)
+        val url = URL(GITHUB_RELEASES_API)
         val conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "GET"
-        conn.connectTimeout = 8000
-        conn.readTimeout = 8000
+        conn.connectTimeout = 10000
+        conn.readTimeout = 15000
         conn.setRequestProperty("User-Agent", "BobrDobr-VPN-Android/$CURRENT_VERSION_NAME")
         conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
 
@@ -186,10 +213,52 @@ class AppUpdateManager private constructor(private val appContext: Context) {
             return null
         }
 
-        val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
-        val root = JSONObject(jsonStr)
+        val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }.trim()
+        return parseRelease(jsonStr, _includePrereleases.value)
+    }
+
+    fun parseRelease(jsonStr: String, allowPrereleases: Boolean): GitHubRelease? {
+        val trimmed = jsonStr.trim()
+        val targetObj: JSONObject? = if (trimmed.startsWith("[")) {
+            val arr = JSONArray(trimmed)
+            var candidate: JSONObject? = null
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                if (obj.optBoolean("draft", false)) continue
+                val isPre = obj.optBoolean("prerelease", false)
+                if (!allowPrereleases && isPre) continue
+
+                // Check if has .apk asset
+                val assets = obj.optJSONArray("assets") ?: continue
+                var hasApk = false
+                for (j in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(j) ?: continue
+                    val name = asset.optString("name", "")
+                    if (name.endsWith(".apk", ignoreCase = true)) {
+                        hasApk = true
+                        break
+                    }
+                }
+                if (hasApk) {
+                    candidate = obj
+                    break
+                }
+            }
+            candidate
+        } else {
+            val obj = JSONObject(trimmed)
+            if (obj.optBoolean("draft", false)) return null
+            val isPre = obj.optBoolean("prerelease", false)
+            if (!allowPrereleases && isPre) return null
+            obj
+        }
+
+        val root = targetObj ?: return null
 
         val tagName = root.optString("tag_name", "")
+        if (tagName.isBlank()) return null
+
+        val isPre = root.optBoolean("prerelease", false)
         val title = root.optString("name", tagName)
         val body = root.optString("body", "")
         val htmlUrl = root.optString("html_url", GITHUB_REPO_URL)
@@ -222,7 +291,8 @@ class AppUpdateManager private constructor(private val appContext: Context) {
             changelog = body,
             htmlUrl = htmlUrl,
             downloadUrl = downloadUrl,
-            apkSize = apkSize
+            apkSize = apkSize,
+            isPrerelease = isPre
         )
     }
 
@@ -278,21 +348,40 @@ class AppUpdateManager private constructor(private val appContext: Context) {
         return destinationFile
     }
 
-    private fun isNewerVersion(remote: String, current: String): Boolean {
-        try {
-            val remoteParts = remote.split(".").map { it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0 }
-            val currentParts = current.split(".").map { it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0 }
+    fun cleanVersion(v: String): String = v.trim().removePrefix("v").removePrefix("V").trim()
 
-            val maxLen = maxOf(remoteParts.size, currentParts.size)
-            for (i in 0 until maxLen) {
-                val r = remoteParts.getOrElse(i) { 0 }
-                val c = currentParts.getOrElse(i) { 0 }
-                if (r > c) return true
-                if (r < c) return false
+    private fun parseVersionComponents(version: String): List<Int> {
+        val cleaned = cleanVersion(version)
+        val mainPart = cleaned.split("-")[0]
+        return mainPart.split(".").mapNotNull { it.toIntOrNull() }
+    }
+
+    fun compareVersions(v1: String, v2: String): Int {
+        val parts1 = parseVersionComponents(v1)
+        val parts2 = parseVersionComponents(v2)
+        val maxLen = maxOf(parts1.size, parts2.size)
+
+        for (i in 0 until maxLen) {
+            val num1 = parts1.getOrElse(i) { 0 }
+            val num2 = parts2.getOrElse(i) { 0 }
+            if (num1 != num2) {
+                return num1.compareTo(num2)
             }
-            return false
-        } catch (_: Exception) {
-            return false
         }
+
+        val clean1 = cleanVersion(v1)
+        val clean2 = cleanVersion(v2)
+        val hasPre1 = clean1.contains("-")
+        val hasPre2 = clean2.contains("-")
+
+        return when {
+            !hasPre1 && hasPre2 -> 1
+            hasPre1 && !hasPre2 -> -1
+            else -> 0
+        }
+    }
+
+    fun isNewerVersion(remote: String, current: String): Boolean {
+        return compareVersions(remote, current) > 0
     }
 }

@@ -3,6 +3,7 @@ package com.bobrdobr.vpn.updater
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -26,7 +27,8 @@ object UpdateChecker {
      */
     suspend fun checkForUpdate(
         currentVersionName: String,
-        apiUrl: String = GITHUB_LATEST_RELEASE_URL
+        apiUrl: String = GITHUB_RELEASES_URL,
+        includePrereleases: Boolean = true
     ): Result<ReleaseInfo?> = withContext(Dispatchers.IO) {
         var connection: HttpURLConnection? = null
         try {
@@ -46,7 +48,7 @@ object UpdateChecker {
                 if (apiUrl == GITHUB_LATEST_RELEASE_URL) {
                     Log.d(TAG, "Latest release returned 404, falling back to all releases list...")
                     connection.disconnect()
-                    return@withContext checkForUpdate(currentVersionName, GITHUB_RELEASES_URL)
+                    return@withContext checkForUpdate(currentVersionName, GITHUB_RELEASES_URL, includePrereleases)
                 }
                 Log.d(TAG, "No releases published yet on repository (404)")
                 return@withContext Result.success(null)
@@ -60,7 +62,7 @@ object UpdateChecker {
             }
 
             val jsonStr = connection.inputStream.bufferedReader().use { it.readText() }
-            val releaseInfo = parseReleaseInfo(jsonStr) ?: return@withContext Result.success(null)
+            val releaseInfo = parseReleaseInfo(jsonStr, includePrereleases) ?: return@withContext Result.success(null)
 
             if (isNewerVersion(releaseInfo.versionName, currentVersionName)) {
                 Log.i(TAG, "Newer version available: ${releaseInfo.versionName} > $currentVersionName")
@@ -79,27 +81,54 @@ object UpdateChecker {
 
     /**
      * Parses the GitHub Release JSON object or array into a [ReleaseInfo] instance.
-     * Supports both single release objects and releases arrays (taking the first release).
+     * Supports both single release objects and releases arrays (taking the first matching release).
+     * If [includePrereleases] is false, skips drafts and prereleases.
      * Returns null if JSON is invalid or no .apk asset is present.
      */
-    fun parseReleaseInfo(jsonStr: String): ReleaseInfo? {
+    fun parseReleaseInfo(jsonStr: String, includePrereleases: Boolean = true): ReleaseInfo? {
         val trimmed = jsonStr.trim()
-        val root = if (trimmed.startsWith("[")) {
-            val arr = org.json.JSONArray(trimmed)
-            if (arr.length() == 0) return null
-            arr.optJSONObject(0) ?: return null
+        val candidateObject = if (trimmed.startsWith("[")) {
+            val arr = JSONArray(trimmed)
+            var found: JSONObject? = null
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                if (obj.optBoolean("draft", false)) continue
+                val isPre = obj.optBoolean("prerelease", false)
+                if (!includePrereleases && isPre) continue
+
+                // Check for APK asset
+                val assets = obj.optJSONArray("assets") ?: continue
+                var hasApk = false
+                for (j in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(j) ?: continue
+                    if (asset.optString("name", "").endsWith(".apk", ignoreCase = true)) {
+                        hasApk = true
+                        break
+                    }
+                }
+                if (hasApk) {
+                    found = obj
+                    break
+                }
+            }
+            found ?: return null
         } else {
-            JSONObject(trimmed)
+            val obj = JSONObject(trimmed)
+            if (obj.optBoolean("draft", false)) return null
+            if (!includePrereleases && obj.optBoolean("prerelease", false)) return null
+            obj
         }
-        val tagName = root.optString("tag_name", "").trim()
+
+        val tagName = candidateObject.optString("tag_name", "").trim()
         if (tagName.isEmpty()) return null
 
+        val isPre = candidateObject.optBoolean("prerelease", false)
         val versionName = cleanVersion(tagName)
-        val title = root.optString("name", tagName).ifEmpty { tagName }
-        val changelog = root.optString("body", "")
-        val htmlUrl = root.optString("html_url", "")
+        val title = candidateObject.optString("name", tagName).ifEmpty { tagName }
+        val changelog = candidateObject.optString("body", "")
+        val htmlUrl = candidateObject.optString("html_url", "")
 
-        val assets = root.optJSONArray("assets") ?: return null
+        val assets = candidateObject.optJSONArray("assets") ?: return null
         var apkUrl = ""
         var apkSize = 0L
 
@@ -124,7 +153,8 @@ object UpdateChecker {
             changelog = changelog,
             htmlUrl = htmlUrl,
             apkDownloadUrl = apkUrl,
-            apkSize = apkSize
+            apkSize = apkSize,
+            isPrerelease = isPre
         )
     }
 

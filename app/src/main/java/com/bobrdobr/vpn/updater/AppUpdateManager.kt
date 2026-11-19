@@ -25,6 +25,8 @@ class AppUpdateManager private constructor(private val appContext: Context) {
 
     companion object {
         private const val TAG = "AppUpdateManager"
+        private const val PREFS_NAME = "bobrdobr_update_prefs"
+        private const val KEY_INCLUDE_PRERELEASES = "key_include_prereleases"
 
         @Volatile
         private var instance: AppUpdateManager? = null
@@ -38,6 +40,41 @@ class AppUpdateManager private constructor(private val appContext: Context) {
 
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun detectDefaultIncludePrereleases(version: String): Boolean {
+        val v = version.lowercase()
+        return v.contains("pre") || v.contains("beta") || v.contains("alpha") || v.contains("rc") || v.contains("-")
+    }
+
+    private fun getCurrentVersion(): String {
+        return try {
+            val pInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+            pInfo.versionName ?: "0.8.0-prerelease"
+        } catch (_: Exception) {
+            "0.8.0-prerelease"
+        }
+    }
+
+    private val _includePrereleases = MutableStateFlow(
+        if (prefs.contains(KEY_INCLUDE_PRERELEASES)) {
+            prefs.getBoolean(KEY_INCLUDE_PRERELEASES, false)
+        } else {
+            detectDefaultIncludePrereleases(getCurrentVersion())
+        }
+    )
+    val includePrereleases: StateFlow<Boolean> = _includePrereleases.asStateFlow()
+
+    fun setIncludePrereleases(enabled: Boolean) {
+        _includePrereleases.value = enabled
+        try {
+            prefs.edit().putBoolean(KEY_INCLUDE_PRERELEASES, enabled).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist includePrereleases: ${e.message}")
+        }
+        check(isManual = false)
+    }
+
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
@@ -45,23 +82,21 @@ class AppUpdateManager private constructor(private val appContext: Context) {
      * Checks for new versions on GitHub Releases.
      */
     fun check(isManual: Boolean = false) {
-        val currentVersion = try {
-            val pInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
-            pInfo.versionName ?: "0.8.0-prerelease"
-        } catch (e: Exception) {
-            "0.8.0-prerelease"
-        }
+        val currentVersion = getCurrentVersion()
 
         _updateState.value = UpdateState.Checking
 
         managerScope.launch {
-            Log.d(TAG, "Checking for updates (currentVersion=$currentVersion, isManual=$isManual)...")
-            val result = UpdateChecker.checkForUpdate(currentVersion)
+            Log.d(TAG, "Checking for updates (currentVersion=$currentVersion, isManual=$isManual, includePrereleases=${_includePrereleases.value})...")
+            val result = UpdateChecker.checkForUpdate(
+                currentVersionName = currentVersion,
+                includePrereleases = _includePrereleases.value
+            )
 
             result.fold(
                 onSuccess = { release ->
                     if (release != null) {
-                        Log.i(TAG, "Update found: ${release.versionName}")
+                        Log.i(TAG, "Update found: ${release.versionName} (prerelease=${release.isPrerelease})")
                         _updateState.value = UpdateState.UpdateAvailable(release)
                     } else {
                         Log.d(TAG, "App is up to date")

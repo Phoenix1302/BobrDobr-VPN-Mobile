@@ -12,7 +12,8 @@ data class ReleaseInfo(
     val changelog: String,
     val htmlUrl: String,
     val apkDownloadUrl: String,
-    val apkSize: Long
+    val apkSize: Long,
+    val isPrerelease: Boolean = false
 )
 
 /**

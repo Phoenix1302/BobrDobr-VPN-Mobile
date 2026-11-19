@@ -29,7 +29,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import org.bobrdobr.vpn.core.R
 import org.bobrdobr.vpn.core.engine.NativeEngineController
 import org.bobrdobr.vpn.core.logger.DebugLogger
 import org.bobrdobr.vpn.core.model.TunnelConfig
@@ -580,10 +579,10 @@ class VpnTunnelService : VpnService(), SocketProtector {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                getString(R.string.vpn_channel_name),
+                "БобрДобр VPN - Статус плотины",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = getString(R.string.vpn_channel_desc)
+                description = "Постоянное уведомление о статусе защищенного соединения VPN"
                 setShowBadge(false)
                 enableLights(false)
                 enableVibration(false)
@@ -617,27 +616,27 @@ class VpnTunnelService : VpnService(), SocketProtector {
         val (contentTitle, contentText) = when (state) {
             is VpnState.Connected -> Pair(
                 "БобрДобр VPN: Плотина под защитой",
-                getString(R.string.vpn_status_connected, "${state.protocol.displayName} - $serverName")
+                "Плотина под надежной защитой! (${state.protocol.displayName} - $serverName)"
             )
             is VpnState.Connecting -> Pair(
                 "БобрДобр VPN: Возведение плотины…",
-                getString(R.string.vpn_status_connecting, serverName)
+                "Возведение плотины… (Подключение к $serverName)"
             )
             is VpnState.Disconnecting -> Pair(
                 "БобрДобр VPN: Открытие шлюзов…",
-                getString(R.string.vpn_status_disconnecting)
+                "Открытие шлюзов… (Отключение)"
             )
             is VpnState.Reconnecting -> Pair(
                 "БобрДобр VPN: Укрепление плотины…",
-                getString(R.string.vpn_status_reconnecting, serverName)
+                "Укрепление плотины… (Повторное подключение к $serverName)"
             )
             is VpnState.Error -> Pair(
                 "БобрДобр VPN: Прорыв плотины!",
-                getString(R.string.vpn_status_error, state.message)
+                "Прорыв плотины! Ошибка: ${state.message}"
             )
             is VpnState.Disconnected -> Pair(
                 "БобрДобр VPN: Шлюзы открыты",
-                getString(R.string.vpn_status_disconnected)
+                "Шлюзы открыты (Отключено)"
             )
         }
 
@@ -676,7 +675,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
         if (state is VpnState.Connected || state is VpnState.Connecting) {
             builder.addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
-                getString(R.string.vpn_action_disconnect),
+                "ОТКЛЮЧИТЬ",
                 disconnectPendingIntent
             )
         }

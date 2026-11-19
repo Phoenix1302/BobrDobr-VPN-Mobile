@@ -144,4 +144,62 @@ class UpdateCheckerTest {
         assertEquals("BobrDobr-mobile-0.8.0.apk", release.apkDownloadUrl.substringAfterLast("/"))
         assertEquals(26275031L, release.apkSize)
     }
+
+    @Test
+    fun testPrereleaseChannelFiltering() {
+        val releasesArrayJson = """
+            [
+              {
+                "tag_name": "v0.9.0-rc1",
+                "name": "Release 0.9.0-rc1",
+                "prerelease": true,
+                "draft": false,
+                "assets": [
+                  {
+                    "name": "BobrDobr-mobile-0.9.0-rc1.apk",
+                    "browser_download_url": "https://example.com/BobrDobr-mobile-0.9.0-rc1.apk",
+                    "size": 12345
+                  }
+                ]
+              },
+              {
+                "tag_name": "v0.8.5",
+                "name": "Release 0.8.5 Stable",
+                "prerelease": false,
+                "draft": false,
+                "assets": [
+                  {
+                    "name": "BobrDobr-mobile-0.8.5.apk",
+                    "browser_download_url": "https://example.com/BobrDobr-mobile-0.8.5.apk",
+                    "size": 12300
+                  }
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        // When includePrereleases = true -> selects the first (v0.9.0-rc1)
+        val preRelease = UpdateChecker.parseReleaseInfo(releasesArrayJson, includePrereleases = true)
+        assertNotNull(preRelease)
+        assertEquals("0.9.0-rc1", preRelease!!.versionName)
+        assertTrue(preRelease.isPrerelease)
+
+        // When includePrereleases = false -> skips prerelease and selects the stable release (v0.8.5)
+        val stableRelease = UpdateChecker.parseReleaseInfo(releasesArrayJson, includePrereleases = false)
+        assertNotNull(stableRelease)
+        assertEquals("0.8.5", stableRelease!!.versionName)
+        assertFalse(stableRelease.isPrerelease)
+
+        // Single object with prerelease=true when includePrereleases=false returns null
+        val singlePrereleaseJson = """
+            {
+              "tag_name": "v0.9.0-beta",
+              "prerelease": true,
+              "draft": false,
+              "assets": [{ "name": "app.apk", "browser_download_url": "https://example.com/app.apk", "size": 100 }]
+            }
+        """.trimIndent()
+        assertNull(UpdateChecker.parseReleaseInfo(singlePrereleaseJson, includePrereleases = false))
+        assertNotNull(UpdateChecker.parseReleaseInfo(singlePrereleaseJson, includePrereleases = true))
+    }
 }

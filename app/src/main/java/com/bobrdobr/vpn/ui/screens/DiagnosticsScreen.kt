@@ -27,16 +27,20 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,6 +71,7 @@ import com.bobrdobr.vpn.debug.DebugLogger
 import com.bobrdobr.vpn.debug.DiagnosticDumpManager
 import com.bobrdobr.vpn.debug.LogEntry
 import com.bobrdobr.vpn.debug.LogLevel
+import com.bobrdobr.vpn.ui.components.UpdateDialog
 import com.bobrdobr.vpn.ui.theme.BackgroundCard
 import com.bobrdobr.vpn.ui.theme.BackgroundCardActive
 import com.bobrdobr.vpn.ui.theme.BackgroundMain
@@ -80,6 +85,8 @@ import com.bobrdobr.vpn.ui.theme.TextMuted
 import com.bobrdobr.vpn.ui.theme.TextPrimary
 import com.bobrdobr.vpn.ui.theme.TextSecondary
 import com.bobrdobr.vpn.ui.theme.neonGlow
+import com.bobrdobr.vpn.update.AppUpdateManager
+import com.bobrdobr.vpn.update.UpdateState
 
 /**
  * DiagnosticsScreen: Cyberpunk developer and diagnostics screen.
@@ -95,6 +102,27 @@ fun DiagnosticsScreen(
     val clipboardManager = LocalClipboardManager.current
     val isDebugMode by DebugLogger.isDebugModeEnabled.collectAsStateWithLifecycle()
     val logs by DebugLogger.logsFlow.collectAsStateWithLifecycle()
+
+    val updateManager = remember { AppUpdateManager.getInstance(context) }
+    val includePrereleases by updateManager.includePrereleases.collectAsStateWithLifecycle()
+    val updateState by updateManager.updateState.collectAsStateWithLifecycle()
+    var showUpdateDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        updateManager.manualCheckEvent.collect { result ->
+            when (result) {
+                is AppUpdateManager.ManualCheckResult.UpToDate -> {
+                    Toast.makeText(context, "У вас установлена последняя версия (${AppUpdateManager.CURRENT_VERSION_NAME})", Toast.LENGTH_SHORT).show()
+                }
+                is AppUpdateManager.ManualCheckResult.Available -> {
+                    showUpdateDialog = true
+                }
+                is AppUpdateManager.ManualCheckResult.Failed -> {
+                    Toast.makeText(context, "Сбой проверки обновлений: ${result.error}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     var isTerminalExpanded by remember { mutableStateOf(false) }
 
@@ -243,7 +271,179 @@ fun DiagnosticsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Section 3: Diagnostic Dump (Share Full Dump)
+        // Section 3: Update Channel (PRE-RELEASE vs STABLE)
+        DiagnosticsSectionHeader(title = "КАНАЛ ОБНОВЛЕНИЙ (UPDATE CHANNEL)")
+
+        DiagnosticsCard {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background((if (includePrereleases) NeonPurple else NeonEmerald).copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudSync,
+                                contentDescription = null,
+                                tint = if (includePrereleases) NeonPurple else NeonEmerald,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column {
+                            Text(
+                                text = "Получать предварительные сборки",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary,
+                                    fontSize = 14.sp
+                                )
+                            )
+                            Text(
+                                text = "Позволяет скачивать pre-release версии. По умолчанию активно для тестовых сборок и выключено для стабильных.",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = TextSecondary,
+                                    fontSize = 11.5.sp
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Switch(
+                        checked = includePrereleases,
+                        onCheckedChange = { updateManager.setIncludePrereleases(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = BackgroundMain,
+                            checkedTrackColor = NeonPurple,
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = BackgroundCardActive
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                SpecDivider()
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Informational Status Plate
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            (if (includePrereleases) NeonPurple else NeonEmerald).copy(alpha = 0.08f)
+                        )
+                        .border(
+                            1.dp,
+                            (if (includePrereleases) NeonPurple else NeonEmerald).copy(alpha = 0.35f),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .padding(10.dp)
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        (if (includePrereleases) NeonPurple else NeonEmerald).copy(alpha = 0.2f)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (includePrereleases) NeonPurple else NeonEmerald,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = if (includePrereleases) "КАНАЛ: PRE-RELEASE & BETA" else "КАНАЛ: ТОЛЬКО СТАБИЛЬНЫЕ (STABLE)",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = if (includePrereleases) NeonPurple else NeonEmerald,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = if (includePrereleases) {
+                                "Приложение отслеживает как стабильные, так и пререлизные сборки на GitHub."
+                            } else {
+                                "Приложение игнорирует пререлизы и обновляется только на проверенные стабильные релизы."
+                            },
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = TextSecondary,
+                                fontSize = 11.5.sp
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Button: Check updates right now
+                val isCheckingUpdate = updateState is UpdateState.Checking
+                Button(
+                    onClick = { updateManager.check(isManual = true) },
+                    enabled = !isCheckingUpdate,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (includePrereleases) NeonPurple else NeonCyan,
+                        contentColor = BackgroundMain
+                    )
+                ) {
+                    if (isCheckingUpdate) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = BackgroundMain,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Проверка обновлений...",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Проверить обновления прямо сейчас",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Section 4: Diagnostic Dump (Share Full Dump)
         DiagnosticsSectionHeader(title = "ДИАГНОСТИЧЕСКИЙ ДАМП")
 
         DiagnosticsCard {
@@ -297,7 +497,7 @@ fun DiagnosticsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Section 4: Real-time Terminal Log Viewer
+        // Section 5: Real-time Terminal Log Viewer
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -395,7 +595,7 @@ fun DiagnosticsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Section 5: Experimental Features (Preview)
+        // Section 6: Experimental Features (Preview)
         DiagnosticsSectionHeader(title = "ЭКСПЕРИМЕНТАЛЬНЫЕ ФУНКЦИИ")
 
         DiagnosticsCard {
@@ -465,6 +665,21 @@ fun DiagnosticsScreen(
         }
 
         Spacer(modifier = Modifier.height(30.dp))
+    }
+
+    val availableRelease = (updateState as? UpdateState.UpdateAvailable)?.release
+        ?: (updateState as? UpdateState.Downloading)?.release
+        ?: (updateState as? UpdateState.ReadyToInstall)?.release
+
+    if (showUpdateDialog && availableRelease != null) {
+        UpdateDialog(
+            release = availableRelease,
+            updateState = updateState,
+            onDismiss = { showUpdateDialog = false },
+            onDownloadAndInstall = { rel ->
+                updateManager.downloadAndInstall(rel)
+            }
+        )
     }
 }
 
