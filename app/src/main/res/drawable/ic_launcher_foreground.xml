@@ -5,14 +5,6 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Cyber Shield Outer Glow Ring -->
-    <path
-        android:fillColor="#0A10B981"
-        android:strokeColor="#10B981"
-        android:strokeWidth="1.2"
-        android:strokeAlpha="0.4"
-        android:pathData="M 18,54 a 36,36 0 1,1 72,0 a 36,36 0 1,1 -72,0" />
-
     <group
         android:scaleX="0.95"
         android:scaleY="0.95"
