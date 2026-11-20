@@ -3,8 +3,10 @@
 package tun
 
 import (
+	"errors"
 	"os"
 	"sync/atomic"
+	"syscall"
 
 	"openconnect-worker/base"
 	"openconnect-worker/session"
@@ -25,6 +27,19 @@ func ResetStats() {
 	StatsRxPackets.Store(0)
 }
 
+func isTemporaryErr(err error) bool {
+	if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EINTR) {
+		return true
+	}
+	var sysErr *os.SyscallError
+	if errors.As(err, &sysErr) {
+		if sysErr.Err == syscall.EAGAIN || sysErr.Err == syscall.EWOULDBLOCK || sysErr.Err == syscall.EINTR {
+			return true
+		}
+	}
+	return false
+}
+
 // StartTunLoops initializes Android TUN packet I/O wrapping the provided tun_fd
 func StartTunLoops(tunFile *os.File, cSess *session.ConnSession) {
 	go tunToPayloadOut(tunFile, cSess)
@@ -43,6 +58,9 @@ func tunToPayloadOut(tunFile *os.File, cSess *session.ConnSession) {
 	for {
 		n, err := tunFile.Read(buf)
 		if err != nil {
+			if isTemporaryErr(err) {
+				continue
+			}
 			select {
 			case <-cSess.CloseChan:
 				return
@@ -112,6 +130,9 @@ func payloadInToTun(tunFile *os.File, cSess *session.ConnSession) {
 			vpn.PutPayloadBuffer(pl)
 
 			if err != nil {
+				if isTemporaryErr(err) {
+					continue
+				}
 				select {
 				case <-cSess.CloseChan:
 					return

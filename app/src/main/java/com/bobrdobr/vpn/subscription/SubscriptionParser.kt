@@ -517,19 +517,24 @@ object SubscriptionParser {
     }
 
     private fun parseIso8601(dateStr: String): Long {
-        val formats = listOf(
-            "yyyy-MM-dd'T'HH:mm:ss",
-            "yyyy-MM-dd'T'HH:mm:ss.SSS",
-            "yyyy-MM-dd'T'HH:mm:ss'Z'",
-            "yyyy-MM-dd HH:mm:ss"
-        )
-        for (fmt in formats) {
-            try {
-                val sdf = SimpleDateFormat(fmt, Locale.US)
-                val d = sdf.parse(dateStr)
-                if (d != null) return d.time
-            } catch (_: Exception) {}
-        }
+        if (dateStr.isBlank()) return 0L
+        try {
+            return java.time.Instant.parse(dateStr).toEpochMilli()
+        } catch (_: Exception) {}
+
+        try {
+            return java.time.OffsetDateTime.parse(dateStr).toInstant().toEpochMilli()
+        } catch (_: Exception) {}
+
+        try {
+            return java.time.LocalDateTime.parse(dateStr).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
+        } catch (_: Exception) {}
+
+        try {
+            val normalized = dateStr.trim().replace(" ", "T")
+            return java.time.LocalDateTime.parse(normalized).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
+        } catch (_: Exception) {}
+
         return 0L
     }
 
@@ -539,7 +544,7 @@ object SubscriptionParser {
             url = sourceUrl,
             cabinetUrl = deriveCabinetUrl(sourceUrl),
             userId = "imported-key",
-            username = "Egor",
+            username = "Пользователь",
             role = "user",
             status = SubscriptionStatus.ACTIVE,
             expiresAt = System.currentTimeMillis() + 365L * 24L * 60L * 60L * 1000L,

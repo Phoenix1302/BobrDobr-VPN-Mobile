@@ -109,7 +109,7 @@ fun SettingsScreen(
         updateManager.manualCheckEvent.collect { result ->
             when (result) {
                 is AppUpdateManager.ManualCheckResult.UpToDate -> {
-                    Toast.makeText(context, "У вас установлена последняя версия (v0.8.2-prerelease)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "У вас установлена последняя версия (v0.8.4-prerelease)", Toast.LENGTH_SHORT).show()
                 }
                 is AppUpdateManager.ManualCheckResult.Available -> {
                     showUpdateDialog = true
@@ -212,9 +212,9 @@ fun SettingsScreen(
             SettingsActionItem(
                 icon = Icons.Default.Info,
                 title = "БобрДобр VPN Mobile",
-                description = "v0.8.2-prerelease (Сборка 83) • Android ARM64 • x86_64",
+                description = "v0.8.4-prerelease (Сборка 84) • Android ARM64 • x86_64",
                 iconColor = NeonCyan,
-                badge = "v0.8.2",
+                badge = "v0.8.4",
                 onClick = {
                     viewModel.setNavigationTab(com.bobrdobr.vpn.ui.viewmodel.NavigationTab.DIAGNOSTICS)
                 }
@@ -720,7 +720,7 @@ private fun BypassSubnetsDialog(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "Укажите IP-адреса и подсети в формате CIDR (по одной на строку), к которым трафик должен направляться напрямую в обход VPN-туннеля:",
+                    text = "Укажите IP-адреса и подсети в формате CIDR (по одной на строку или через запятую), к которым трафик должен направляться напрямую в обход VPN-туннеля:",
                     style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 12.sp)
                 )
 
@@ -731,7 +731,7 @@ private fun BypassSubnetsDialog(
                     onValueChange = { subnetsText = it },
                     placeholder = {
                         Text(
-                            "192.168.0.0/16\n10.0.0.0/8\n172.16.0.0/12",
+                            "Например:\n192.168.1.0/24\n10.8.0.0/16\n172.16.0.0/12",
                             color = TextMuted,
                             fontSize = 13.sp
                         )
@@ -752,31 +752,27 @@ private fun BypassSubnetsDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Quick Action Buttons: RFC1918 default & Clear
+                // Action Row: Clear button
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.End
                 ) {
                     OutlinedButton(
-                        onClick = {
-                            val rfc1918 = "10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16\n169.254.0.0/16"
-                            subnetsText = if (subnetsText.isBlank()) rfc1918 else "$subnetsText\n$rfc1918"
-                        },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                    ) {
-                        Text("Локальная сеть (RFC1918)", fontSize = 11.sp, maxLines = 1)
-                    }
-
-                    OutlinedButton(
                         onClick = { subnetsText = "" },
-                        modifier = Modifier.weight(0.5f),
+                        enabled = subnetsText.isNotBlank(),
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonRed),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = NeonRed,
+                            disabledContentColor = TextMuted
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text("Очистить", fontSize = 11.sp, maxLines = 1)
                     }
                 }

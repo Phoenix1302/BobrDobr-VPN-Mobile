@@ -14,7 +14,7 @@ sealed class ValidationResult {
         val clientAddress: String,
         val dnsServers: List<String>,
         val hasObfuscation: Boolean,
-        val obfuscationParams: Map<String, Int>
+        val obfuscationParams: Map<String, String>
     ) : ValidationResult()
 
     data class SuccessOcserv(
@@ -49,7 +49,7 @@ object ConfigValidator {
         var endpoint: String? = null
         var publicKey: String? = null
         val dnsList = mutableListOf<String>()
-        val obfParams = mutableMapOf<String, Int>()
+        val obfParams = mutableMapOf<String, String>()
 
         var currentSection = ""
         val reader = BufferedReader(StringReader(trimmed))
@@ -84,15 +84,15 @@ object ConfigValidator {
                             val servers = value.split(Regex("[,\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }
                             dnsList.addAll(servers)
                         }
-                        "jc" -> obfParams["Jc"] = value.toIntOrNull() ?: 4
-                        "jmin" -> obfParams["Jmin"] = value.toIntOrNull() ?: 40
-                        "jmax" -> obfParams["Jmax"] = value.toIntOrNull() ?: 70
-                        "s1" -> obfParams["S1"] = value.toIntOrNull() ?: 28
-                        "s2" -> obfParams["S2"] = value.toIntOrNull() ?: 44
-                        "h1" -> obfParams["H1"] = value.toIntOrNull() ?: 1
-                        "h2" -> obfParams["H2"] = value.toIntOrNull() ?: 2
-                        "h3" -> obfParams["H3"] = value.toIntOrNull() ?: 3
-                        "h4" -> obfParams["H4"] = value.toIntOrNull() ?: 4
+                        "jc" -> obfParams["Jc"] = value.toLongOrNull()?.toString() ?: "4"
+                        "jmin" -> obfParams["Jmin"] = value.toLongOrNull()?.toString() ?: "40"
+                        "jmax" -> obfParams["Jmax"] = value.toLongOrNull()?.toString() ?: "70"
+                        "s1" -> obfParams["S1"] = value.toLongOrNull()?.toString() ?: "28"
+                        "s2" -> obfParams["S2"] = value.toLongOrNull()?.toString() ?: "44"
+                        "h1" -> obfParams["H1"] = value.toLongOrNull()?.toString() ?: "1"
+                        "h2" -> obfParams["H2"] = value.toLongOrNull()?.toString() ?: "2"
+                        "h3" -> obfParams["H3"] = value.toLongOrNull()?.toString() ?: "3"
+                        "h4" -> obfParams["H4"] = value.toLongOrNull()?.toString() ?: "4"
                     }
                 }
                 "peer" -> {
@@ -120,10 +120,25 @@ object ConfigValidator {
             return ValidationResult.Error("В секции [Peer] отсутствует Endpoint")
         }
 
-        // Parse host & port
-        val epParts = endpoint.split(":")
-        val serverAddress = epParts[0].trim()
-        val serverPort = if (epParts.size > 1) epParts[1].toIntOrNull() ?: 51820 else 51820
+        // Parse host & port (supporting IPv6 [2001:db8::1]:51820 as well as IPv4/domain host:port)
+        val (serverAddress, serverPort) = if (endpoint.startsWith("[")) {
+            val closeBracket = endpoint.indexOf("]")
+            if (closeBracket != -1) {
+                val host = endpoint.substring(1, closeBracket).trim()
+                val portPart = endpoint.substring(closeBracket + 1).removePrefix(":")
+                val port = portPart.toIntOrNull() ?: 51820
+                Pair(host, port)
+            } else {
+                val epParts = endpoint.split(":")
+                Pair(epParts[0].trim(), epParts.getOrNull(1)?.toIntOrNull() ?: 51820)
+            }
+        } else if (endpoint.count { it == ':' } > 1) {
+            // Raw IPv6 address without brackets
+            Pair(endpoint.trim(), 51820)
+        } else {
+            val epParts = endpoint.split(":")
+            Pair(epParts[0].trim(), epParts.getOrNull(1)?.toIntOrNull() ?: 51820)
+        }
 
         return ValidationResult.SuccessAwg(
             endpoint = endpoint,

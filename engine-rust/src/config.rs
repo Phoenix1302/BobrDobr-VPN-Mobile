@@ -2,8 +2,114 @@
 //! Supports Remnawave / Windows Client JSON format, nested configs, and WireGuard INI format.
 
 use base64::prelude::*;
-use serde::Deserialize;
 use std::net::SocketAddr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeaderRange {
+    pub min: u32,
+    pub max: u32,
+}
+
+impl HeaderRange {
+    pub const fn single(val: u32) -> Self {
+        Self { min: val, max: val }
+    }
+
+    pub fn new(min: u32, max: u32) -> Self {
+        if min <= max {
+            Self { min, max }
+        } else {
+            Self { min: max, max: min }
+        }
+    }
+
+    pub fn matches(&self, val: u32) -> bool {
+        val >= self.min && val <= self.max
+    }
+
+    pub fn pick(&self) -> u32 {
+        if self.min >= self.max {
+            self.min
+        } else {
+            use rand::Rng;
+            rand::thread_rng().gen_range(self.min..=self.max)
+        }
+    }
+
+    pub fn parse_str(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if let Some((min_s, max_s)) = s.split_once('-') {
+            let min = parse_u32_flexible(min_s)?;
+            let max = parse_u32_flexible(max_s)?;
+            Some(Self::new(min, max))
+        } else {
+            let val = parse_u32_flexible(s)?;
+            Some(Self::single(val))
+        }
+    }
+}
+
+fn parse_u32_flexible(s: &str) -> Option<u32> {
+    let s = s.trim();
+    if s.starts_with("0x") || s.starts_with("0X") {
+        u32::from_str_radix(&s[2..], 16).ok()
+    } else {
+        s.parse::<u32>().ok()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for HeaderRange {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+        struct HeaderRangeVisitor;
+
+        impl<'de> de::Visitor<'de> for HeaderRangeVisitor {
+            type Value = HeaderRange;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a u32 integer or a string like 'min-max' or 'val'")
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v < 0 || v > u32::MAX as i64 {
+                    Err(de::Error::custom("value out of u32 range"))
+                } else {
+                    Ok(HeaderRange::single(v as u32))
+                }
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v > u32::MAX as u64 {
+                    Err(de::Error::custom("value out of u32 range"))
+                } else {
+                    Ok(HeaderRange::single(v as u32))
+                }
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                HeaderRange::parse_str(v)
+                    .ok_or_else(|| de::Error::custom(format!("invalid header range: {}", v)))
+            }
+        }
+
+        deserializer.deserialize_any(HeaderRangeVisitor)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AwgConfig {
@@ -20,10 +126,17 @@ pub struct AwgConfig {
     pub jmax: usize,
     pub s1: usize,
     pub s2: usize,
-    pub h1: u32,
-    pub h2: u32,
-    pub h3: u32,
-    pub h4: u32,
+    pub s3: usize,
+    pub s4: usize,
+    pub h1: HeaderRange,
+    pub h2: HeaderRange,
+    pub h3: HeaderRange,
+    pub h4: HeaderRange,
+    pub i1: Option<String>,
+    pub i2: Option<String>,
+    pub i3: Option<String>,
+    pub i4: Option<String>,
+    pub i5: Option<String>,
 }
 
 impl Default for AwgConfig {
@@ -41,15 +154,22 @@ impl Default for AwgConfig {
             jmax: 70,
             s1: 0,
             s2: 0,
-            h1: 1,
-            h2: 2,
-            h3: 3,
-            h4: 4,
+            s3: 0,
+            s4: 0,
+            h1: HeaderRange::single(1),
+            h2: HeaderRange::single(2),
+            h3: HeaderRange::single(3),
+            h4: HeaderRange::single(4),
+            i1: None,
+            i2: None,
+            i3: None,
+            i4: None,
+            i5: None,
         }
     }
 }
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, serde::Deserialize, Default, Clone)]
 struct ObfuscationConfig {
     #[serde(alias = "Jc", alias = "JC", alias = "jc")]
     jc: Option<usize>,
@@ -61,17 +181,31 @@ struct ObfuscationConfig {
     s1: Option<usize>,
     #[serde(alias = "S2", alias = "s2")]
     s2: Option<usize>,
+    #[serde(alias = "S3", alias = "s3")]
+    s3: Option<usize>,
+    #[serde(alias = "S4", alias = "s4")]
+    s4: Option<usize>,
     #[serde(alias = "H1", alias = "h1")]
-    h1: Option<u32>,
+    h1: Option<HeaderRange>,
     #[serde(alias = "H2", alias = "h2")]
-    h2: Option<u32>,
+    h2: Option<HeaderRange>,
     #[serde(alias = "H3", alias = "h3")]
-    h3: Option<u32>,
+    h3: Option<HeaderRange>,
     #[serde(alias = "H4", alias = "h4")]
-    h4: Option<u32>,
+    h4: Option<HeaderRange>,
+    #[serde(alias = "I1", alias = "i1")]
+    i1: Option<String>,
+    #[serde(alias = "I2", alias = "i2")]
+    i2: Option<String>,
+    #[serde(alias = "I3", alias = "i3")]
+    i3: Option<String>,
+    #[serde(alias = "I4", alias = "i4")]
+    i4: Option<String>,
+    #[serde(alias = "I5", alias = "i5")]
+    i5: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, serde::Deserialize, Default)]
 struct RawJsonConfig {
     #[serde(alias = "privateKey", alias = "PrivateKey", alias = "clientPrivateKey", alias = "client_private_key")]
     private_key: Option<String>,
@@ -104,14 +238,28 @@ struct RawJsonConfig {
     s1: Option<usize>,
     #[serde(alias = "S2")]
     s2: Option<usize>,
+    #[serde(alias = "S3")]
+    s3: Option<usize>,
+    #[serde(alias = "S4")]
+    s4: Option<usize>,
     #[serde(alias = "H1")]
-    h1: Option<u32>,
+    h1: Option<HeaderRange>,
     #[serde(alias = "H2")]
-    h2: Option<u32>,
+    h2: Option<HeaderRange>,
     #[serde(alias = "H3")]
-    h3: Option<u32>,
+    h3: Option<HeaderRange>,
     #[serde(alias = "H4")]
-    h4: Option<u32>,
+    h4: Option<HeaderRange>,
+    #[serde(alias = "I1")]
+    i1: Option<String>,
+    #[serde(alias = "I2")]
+    i2: Option<String>,
+    #[serde(alias = "I3")]
+    i3: Option<String>,
+    #[serde(alias = "I4")]
+    i4: Option<String>,
+    #[serde(alias = "I5")]
+    i5: Option<String>,
 
     // Nested obfuscation object
     obfuscation: Option<ObfuscationConfig>,
@@ -217,10 +365,17 @@ fn parse_ini_into(
             ("interface", "jmax") => if let Ok(v) = val_clean.parse() { config.jmax = v; },
             ("interface", "s1") => if let Ok(v) = val_clean.parse() { config.s1 = v; },
             ("interface", "s2") => if let Ok(v) = val_clean.parse() { config.s2 = v; },
-            ("interface", "h1") => if let Ok(v) = val_clean.parse() { if v > 0 { config.h1 = v; } },
-            ("interface", "h2") => if let Ok(v) = val_clean.parse() { if v > 0 { config.h2 = v; } },
-            ("interface", "h3") => if let Ok(v) = val_clean.parse() { if v > 0 { config.h3 = v; } },
-            ("interface", "h4") => if let Ok(v) = val_clean.parse() { if v > 0 { config.h4 = v; } },
+            ("interface", "s3") => if let Ok(v) = val_clean.parse() { config.s3 = v; },
+            ("interface", "s4") => if let Ok(v) = val_clean.parse() { config.s4 = v; },
+            ("interface", "h1") => if let Some(hr) = HeaderRange::parse_str(val_clean) { config.h1 = hr; },
+            ("interface", "h2") => if let Some(hr) = HeaderRange::parse_str(val_clean) { config.h2 = hr; },
+            ("interface", "h3") => if let Some(hr) = HeaderRange::parse_str(val_clean) { config.h3 = hr; },
+            ("interface", "h4") => if let Some(hr) = HeaderRange::parse_str(val_clean) { config.h4 = hr; },
+            ("interface", "i1") => config.i1 = Some(val_clean.to_string()),
+            ("interface", "i2") => config.i2 = Some(val_clean.to_string()),
+            ("interface", "i3") => config.i3 = Some(val_clean.to_string()),
+            ("interface", "i4") => config.i4 = Some(val_clean.to_string()),
+            ("interface", "i5") => config.i5 = Some(val_clean.to_string()),
 
             ("peer", "publickey") => {
                 if let Ok(k) = decode_key(val_clean) {
@@ -316,10 +471,17 @@ impl AwgConfig {
             if let Some(jmax) = nested.jmax { config.jmax = jmax; }
             if let Some(s1) = nested.s1 { config.s1 = s1; }
             if let Some(s2) = nested.s2 { config.s2 = s2; }
-            if let Some(h1) = nested.h1 { if h1 > 0 { config.h1 = h1; } }
-            if let Some(h2) = nested.h2 { if h2 > 0 { config.h2 = h2; } }
-            if let Some(h3) = nested.h3 { if h3 > 0 { config.h3 = h3; } }
-            if let Some(h4) = nested.h4 { if h4 > 0 { config.h4 = h4; } }
+            if let Some(s3) = nested.s3 { config.s3 = s3; }
+            if let Some(s4) = nested.s4 { config.s4 = s4; }
+            if let Some(h1) = nested.h1 { config.h1 = h1; }
+            if let Some(h2) = nested.h2 { config.h2 = h2; }
+            if let Some(h3) = nested.h3 { config.h3 = h3; }
+            if let Some(h4) = nested.h4 { config.h4 = h4; }
+            if let Some(ref i1) = nested.i1 { config.i1 = Some(i1.clone()); }
+            if let Some(ref i2) = nested.i2 { config.i2 = Some(i2.clone()); }
+            if let Some(ref i3) = nested.i3 { config.i3 = Some(i3.clone()); }
+            if let Some(ref i4) = nested.i4 { config.i4 = Some(i4.clone()); }
+            if let Some(ref i5) = nested.i5 { config.i5 = Some(i5.clone()); }
         }
 
         // Phase 2: Backfill / Override from JSON fields
@@ -389,10 +551,17 @@ impl AwgConfig {
         if let Some(jmax) = raw.jmax { config.jmax = jmax; }
         if let Some(s1) = raw.s1 { config.s1 = s1; }
         if let Some(s2) = raw.s2 { config.s2 = s2; }
-        if let Some(h1) = raw.h1 { if h1 > 0 { config.h1 = h1; } }
-        if let Some(h2) = raw.h2 { if h2 > 0 { config.h2 = h2; } }
-        if let Some(h3) = raw.h3 { if h3 > 0 { config.h3 = h3; } }
-        if let Some(h4) = raw.h4 { if h4 > 0 { config.h4 = h4; } }
+        if let Some(s3) = raw.s3 { config.s3 = s3; }
+        if let Some(s4) = raw.s4 { config.s4 = s4; }
+        if let Some(h1) = raw.h1 { config.h1 = h1; }
+        if let Some(h2) = raw.h2 { config.h2 = h2; }
+        if let Some(h3) = raw.h3 { config.h3 = h3; }
+        if let Some(h4) = raw.h4 { config.h4 = h4; }
+        if let Some(ref i1) = raw.i1 { config.i1 = Some(i1.clone()); }
+        if let Some(ref i2) = raw.i2 { config.i2 = Some(i2.clone()); }
+        if let Some(ref i3) = raw.i3 { config.i3 = Some(i3.clone()); }
+        if let Some(ref i4) = raw.i4 { config.i4 = Some(i4.clone()); }
+        if let Some(ref i5) = raw.i5 { config.i5 = Some(i5.clone()); }
 
         // Obfuscation from nested "obfuscation" object
         if let Some(ref obf) = raw.obfuscation {
@@ -401,10 +570,17 @@ impl AwgConfig {
             if let Some(jmax) = obf.jmax { config.jmax = jmax; }
             if let Some(s1) = obf.s1 { config.s1 = s1; }
             if let Some(s2) = obf.s2 { config.s2 = s2; }
-            if let Some(h1) = obf.h1 { if h1 > 0 { config.h1 = h1; } }
-            if let Some(h2) = obf.h2 { if h2 > 0 { config.h2 = h2; } }
-            if let Some(h3) = obf.h3 { if h3 > 0 { config.h3 = h3; } }
-            if let Some(h4) = obf.h4 { if h4 > 0 { config.h4 = h4; } }
+            if let Some(s3) = obf.s3 { config.s3 = s3; }
+            if let Some(s4) = obf.s4 { config.s4 = s4; }
+            if let Some(h1) = obf.h1 { config.h1 = h1; }
+            if let Some(h2) = obf.h2 { config.h2 = h2; }
+            if let Some(h3) = obf.h3 { config.h3 = h3; }
+            if let Some(h4) = obf.h4 { config.h4 = h4; }
+            if let Some(ref i1) = obf.i1 { config.i1 = Some(i1.clone()); }
+            if let Some(ref i2) = obf.i2 { config.i2 = Some(i2.clone()); }
+            if let Some(ref i3) = obf.i3 { config.i3 = Some(i3.clone()); }
+            if let Some(ref i4) = obf.i4 { config.i4 = Some(i4.clone()); }
+            if let Some(ref i5) = obf.i5 { config.i5 = Some(i5.clone()); }
         }
 
         if config.jmin > config.jmax {

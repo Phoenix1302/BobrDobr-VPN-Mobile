@@ -50,6 +50,7 @@ typedef struct {
     uint64_t rx_speed_bps;
     uint64_t tx_speed_bps;
     uint32_t ping_ms;
+    uint32_t reserved;
     uint64_t last_handshake_timestamp;
     uint64_t timestamp;
 } tunnel_stats_t;
@@ -70,11 +71,21 @@ typedef void (*status_callback_fn)(int status_code, const char* message);
  */
 typedef void (*stats_callback_fn)(uint64_t rx_bytes, uint64_t tx_bytes);
 
+/**
+ * Dynamic TUN configuration callback function pointer.
+ */
+typedef int (*tun_config_callback_fn)(const char* tun_config_json);
+
 #ifndef CGO_ENGINE_INTERNAL
 /**
  * Starts the VPN tunnel using the provided TUN file descriptor and JSON configuration.
  */
 int start_tunnel(int tun_fd, const char* config_json, protect_callback_fn cb, status_callback_fn scb);
+
+/**
+ * Starts the VPN tunnel with dynamic 2-phase TUN configuration support (v2).
+ */
+int start_tunnel_v2(int tun_fd, const char* config_json, protect_callback_fn cb, status_callback_fn scb, tun_config_callback_fn tcb);
 
 /**
  * Gracefully shuts down the VPN tunnel.

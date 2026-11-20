@@ -5,8 +5,11 @@
  * Implements JNI bindings between Kotlin VpnTunnelService/NativeEngineController
  * and native C-ABI protocol engines (libengine_rust.so and libengine_go.so).
  *
- * Designed to be leak-free and deadlock-free with thread-safe callbacks
- * and fine-grained state synchronization.
+ * Hardened against memory corruption, use-after-free, deadlocks, and dynamic loader crashes:
+ *   - RTLD_LOCAL used for engine isolation.
+ *   - Engine handles cached in memory (NO dlclose to prevent Go runtime SIGSEGV).
+ *   - Thread-safe callbacks with RAII ScopedJniEnv and NewLocalRef protection.
+ *   - Full support for 2-phase dynamic TUN negotiation via start_tunnel_v2.
  */
 
 #include <jni.h>
@@ -15,6 +18,7 @@
 #include <pthread.h>
 #include <string>
 #include <mutex>
+#include <unordered_map>
 #include <cstring>
 #include "include/engine_api.h"
 
@@ -32,24 +36,35 @@ JavaVM* g_jvm = nullptr;
 // Synchronization
 std::mutex g_engine_mutex;
 
-// Function pointers to active native engine
+// Function pointer signatures matching engine_api.h
 typedef int (*fn_start_tunnel)(int, const char*, protect_callback_fn, status_callback_fn);
+typedef int (*fn_start_tunnel_v2)(int, const char*, protect_callback_fn, status_callback_fn, tun_config_callback_fn);
 typedef int (*fn_stop_tunnel)(void);
 typedef int (*fn_update_network)(int64_t);
 typedef int (*fn_get_tunnel_stats)(tunnel_stats_t*);
 
-void* g_engine_handle = nullptr;
-fn_start_tunnel g_start_tunnel = nullptr;
-fn_stop_tunnel g_stop_tunnel = nullptr;
-fn_update_network g_update_network = nullptr;
-fn_get_tunnel_stats g_get_tunnel_stats = nullptr;
+struct EngineTable {
+    void* handle = nullptr;
+    fn_start_tunnel start_tunnel = nullptr;
+    fn_start_tunnel_v2 start_tunnel_v2 = nullptr;
+    fn_stop_tunnel stop_tunnel = nullptr;
+    fn_update_network update_network = nullptr;
+    fn_get_tunnel_stats get_tunnel_stats = nullptr;
+};
 
-// Java Callback references
+// Global cache for loaded engine libraries (Handles are NEVER dlclose'd to prevent Go runtime SIGSEGV)
+std::unordered_map<std::string, EngineTable> g_engine_cache;
+EngineTable g_active_engine;
+
+// Java Callback references (GlobalRefs managed with proper synchronization)
 jobject g_protector_obj = nullptr;
 jmethodID g_protect_method_id = nullptr;
 
 jobject g_status_listener_obj = nullptr;
 jmethodID g_status_method_id = nullptr;
+
+jobject g_tun_config_cb_obj = nullptr;
+jmethodID g_tun_config_method_id = nullptr;
 
 // Cached TunnelStats class and constructor
 jclass g_tunnel_stats_class = nullptr;
@@ -84,21 +99,8 @@ private:
     bool attached_;
 };
 
-// C-ABI Callback implementations bridging to Java
+// C-ABI Callback: Socket protection (VpnService.protect)
 bool c_protect_callback(int socket_fd) {
-    jobject protector_obj = nullptr;
-    jmethodID protect_method = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(g_engine_mutex);
-        protector_obj = g_protector_obj;
-        protect_method = g_protect_method_id;
-    }
-
-    if (!protector_obj || !protect_method) {
-        LOGE("c_protect_callback: SocketProtector instance is null");
-        return false;
-    }
-
     ScopedJniEnv scopedEnv;
     JNIEnv* env = scopedEnv.get();
     if (!env) {
@@ -106,7 +108,27 @@ bool c_protect_callback(int socket_fd) {
         return false;
     }
 
-    jboolean result = env->CallBooleanMethod(protector_obj, protect_method, static_cast<jint>(socket_fd));
+    jobject local_protector = nullptr;
+    jmethodID protect_method = nullptr;
+
+    {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        if (g_protector_obj && g_protect_method_id) {
+            local_protector = env->NewLocalRef(g_protector_obj);
+            protect_method = g_protect_method_id;
+        }
+    }
+
+    if (!local_protector || !protect_method) {
+        LOGE("c_protect_callback: SocketProtector instance is null");
+        if (local_protector) env->DeleteLocalRef(local_protector);
+        return false;
+    }
+
+    // Call Java method OUTSIDE g_engine_mutex lock to prevent deadlock
+    jboolean result = env->CallBooleanMethod(local_protector, protect_method, static_cast<jint>(socket_fd));
+    env->DeleteLocalRef(local_protector);
+
     if (env->ExceptionCheck()) {
         LOGE("c_protect_callback: Exception in Java protectSocket()");
         env->ExceptionDescribe();
@@ -118,20 +140,8 @@ bool c_protect_callback(int socket_fd) {
     return result == JNI_TRUE;
 }
 
+// C-ABI Callback: Status and state transition reporting
 void c_status_callback(int status_code, const char* message) {
-    jobject listener_obj = nullptr;
-    jmethodID status_method = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(g_engine_mutex);
-        listener_obj = g_status_listener_obj;
-        status_method = g_status_method_id;
-    }
-
-    if (!listener_obj || !status_method) {
-        LOGD("c_status_callback: No status listener registered (code=%d, msg=%s)", status_code, message ? message : "");
-        return;
-    }
-
     ScopedJniEnv scopedEnv;
     JNIEnv* env = scopedEnv.get();
     if (!env) {
@@ -139,9 +149,28 @@ void c_status_callback(int status_code, const char* message) {
         return;
     }
 
+    jobject local_listener = nullptr;
+    jmethodID status_method = nullptr;
+
+    {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        if (g_status_listener_obj && g_status_method_id) {
+            local_listener = env->NewLocalRef(g_status_listener_obj);
+            status_method = g_status_method_id;
+        }
+    }
+
+    if (!local_listener || !status_method) {
+        LOGD("c_status_callback: No status listener registered (code=%d, msg=%s)",
+             status_code, message ? message : "");
+        if (local_listener) env->DeleteLocalRef(local_listener);
+        return;
+    }
+
     jstring j_msg = env->NewStringUTF(message ? message : "");
-    env->CallVoidMethod(listener_obj, status_method, static_cast<jint>(status_code), j_msg);
+    env->CallVoidMethod(local_listener, status_method, static_cast<jint>(status_code), j_msg);
     env->DeleteLocalRef(j_msg);
+    env->DeleteLocalRef(local_listener);
 
     if (env->ExceptionCheck()) {
         LOGE("c_status_callback: Exception in Java onStatusChanged()");
@@ -150,14 +179,63 @@ void c_status_callback(int status_code, const char* message) {
     }
 }
 
+// C-ABI Callback: Dynamic 2-phase TUN creation (CSTP negotiated parameters -> VpnService.Builder)
+int c_tun_config_callback(const char* json_str) {
+    ScopedJniEnv scopedEnv;
+    JNIEnv* env = scopedEnv.get();
+    if (!env) {
+        LOGE("c_tun_config_callback: Failed to acquire JNIEnv");
+        return -1;
+    }
+
+    jobject local_cb = nullptr;
+    jmethodID method = nullptr;
+
+    {
+        std::lock_guard<std::mutex> lock(g_engine_mutex);
+        if (g_tun_config_cb_obj && g_tun_config_method_id) {
+            local_cb = env->NewLocalRef(g_tun_config_cb_obj);
+            method = g_tun_config_method_id;
+        }
+    }
+
+    if (!local_cb || !method) {
+        LOGE("c_tun_config_callback: TunConfigCallback instance is null");
+        if (local_cb) env->DeleteLocalRef(local_cb);
+        return -1;
+    }
+
+    jstring j_json = env->NewStringUTF(json_str ? json_str : "{}");
+    jint tunFd = env->CallIntMethod(local_cb, method, j_json);
+    env->DeleteLocalRef(j_json);
+    env->DeleteLocalRef(local_cb);
+
+    if (env->ExceptionCheck()) {
+        LOGE("c_tun_config_callback: Exception in Java onTunConfigReady()");
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+        return -1;
+    }
+
+    LOGI("c_tun_config_callback: Dynamic TUN created successfully, fd=%d", tunFd);
+    return static_cast<int>(tunFd);
+}
+
 void cleanup_callbacks_locked(JNIEnv* env) {
     if (g_protector_obj) {
         env->DeleteGlobalRef(g_protector_obj);
         g_protector_obj = nullptr;
+        g_protect_method_id = nullptr;
     }
     if (g_status_listener_obj) {
         env->DeleteGlobalRef(g_status_listener_obj);
         g_status_listener_obj = nullptr;
+        g_status_method_id = nullptr;
+    }
+    if (g_tun_config_cb_obj) {
+        env->DeleteGlobalRef(g_tun_config_cb_obj);
+        g_tun_config_cb_obj = nullptr;
+        g_tun_config_method_id = nullptr;
     }
 }
 
@@ -205,20 +283,13 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void* reserved) {
         }
         cleanup_callbacks_locked(env);
     }
-    std::lock_guard<std::mutex> lock(g_engine_mutex);
-    if (g_engine_handle) {
-        dlclose(g_engine_handle);
-        g_engine_handle = nullptr;
-    }
+    // Note: Do NOT dlclose cached engine handles here; OS process teardown will free pages cleanly
+    // without triggering SIGSEGV in background Go runtime runtime/cgo worker threads.
 }
 
 /**
  * Initializes and dynamically binds the selected native protocol engine.
- *
- * @param env JNI environment.
- * @param clazz JniBridge class.
- * @param jLibName Library name, e.g., "libengine_rust.so" or "libengine_go.so".
- * @return 0 on success, negative error code on failure.
+ * Cached in g_engine_cache to prevent dlclose-induced crashes when toggling engines.
  */
 JNIEXPORT jint JNICALL
 Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeInitEngine(
@@ -233,47 +304,54 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeInitEngine(
         return ENGINE_ERR_INVALID_ARG;
     }
 
-    LOGI("Loading native VPN engine library: %s", libName);
-
-    // If an engine was already loaded, close it first
-    if (g_engine_handle) {
-        dlclose(g_engine_handle);
-        g_engine_handle = nullptr;
-    }
-
-    g_start_tunnel = nullptr;
-    g_stop_tunnel = nullptr;
-    g_update_network = nullptr;
-    g_get_tunnel_stats = nullptr;
-
-    void* handle = dlopen(libName, RTLD_NOW | RTLD_GLOBAL);
+    std::string libNameStr(libName);
     env->ReleaseStringUTFChars(jLibName, libName);
 
+    // Check if library handle is already cached
+    auto it = g_engine_cache.find(libNameStr);
+    if (it != g_engine_cache.end()) {
+        g_active_engine = it->second;
+        LOGI("Native engine '%s' restored from cache (handle=%p)", libNameStr.c_str(), g_active_engine.handle);
+        return ENGINE_SUCCESS;
+    }
+
+    LOGI("Loading native VPN engine library: %s (RTLD_NOW | RTLD_LOCAL)", libNameStr.c_str());
+
+    // Use RTLD_LOCAL to keep symbol tables isolated
+    void* handle = dlopen(libNameStr.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         const char* err = dlerror();
-        LOGE("Failed to dlopen engine: %s", err ? err : "unknown error");
+        LOGE("Failed to dlopen engine '%s': %s", libNameStr.c_str(), err ? err : "unknown error");
         return ENGINE_ERR_GENERIC;
     }
 
-    g_start_tunnel = reinterpret_cast<fn_start_tunnel>(dlsym(handle, "start_tunnel"));
-    g_stop_tunnel = reinterpret_cast<fn_stop_tunnel>(dlsym(handle, "stop_tunnel"));
-    g_update_network = reinterpret_cast<fn_update_network>(dlsym(handle, "update_network"));
-    g_get_tunnel_stats = reinterpret_cast<fn_get_tunnel_stats>(dlsym(handle, "get_tunnel_stats"));
+    EngineTable table;
+    table.handle = handle;
+    table.start_tunnel = reinterpret_cast<fn_start_tunnel>(dlsym(handle, "start_tunnel"));
+    table.start_tunnel_v2 = reinterpret_cast<fn_start_tunnel_v2>(dlsym(handle, "start_tunnel_v2"));
+    table.stop_tunnel = reinterpret_cast<fn_stop_tunnel>(dlsym(handle, "stop_tunnel"));
+    table.update_network = reinterpret_cast<fn_update_network>(dlsym(handle, "update_network"));
+    table.get_tunnel_stats = reinterpret_cast<fn_get_tunnel_stats>(dlsym(handle, "get_tunnel_stats"));
 
-    if (!g_start_tunnel || !g_stop_tunnel || !g_update_network || !g_get_tunnel_stats) {
-        LOGE("Engine library is missing required C-ABI symbols! start=%p, stop=%p, update=%p, stats=%p",
-             g_start_tunnel, g_stop_tunnel, g_update_network, g_get_tunnel_stats);
-        dlclose(handle);
+    if ((!table.start_tunnel && !table.start_tunnel_v2) ||
+        !table.stop_tunnel || !table.update_network || !table.get_tunnel_stats) {
+        LOGE("Engine library '%s' missing required C-ABI symbols! start=%p, start_v2=%p, stop=%p, update=%p, stats=%p",
+             libNameStr.c_str(), table.start_tunnel, table.start_tunnel_v2,
+             table.stop_tunnel, table.update_network, table.get_tunnel_stats);
+        // Do not dlclose, keep loaded safely
         return ENGINE_ERR_GENERIC;
     }
 
-    g_engine_handle = handle;
-    LOGI("Native engine loaded and symbols resolved successfully");
+    g_engine_cache[libNameStr] = table;
+    g_active_engine = table;
+    LOGI("Native engine '%s' loaded and cached successfully (has_start_v2=%d)",
+         libNameStr.c_str(), table.start_tunnel_v2 != nullptr);
     return ENGINE_SUCCESS;
 }
 
 /**
  * Starts the tunnel via the active native engine.
+ * Supports both traditional 1-phase TUN (start_tunnel) and 2-phase dynamic TUN (start_tunnel_v2).
  */
 JNIEXPORT jint JNICALL
 Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeStartTunnel(
@@ -282,21 +360,25 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeStartTunnel(
         jint tunFd,
         jstring jConfigJson,
         jobject jProtector,
-        jobject jStatusListener) {
+        jobject jStatusListener,
+        jobject jTunConfigCallback) {
     (void)clazz;
 
     fn_start_tunnel start_fn = nullptr;
+    fn_start_tunnel_v2 start_v2_fn = nullptr;
 
     {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
 
-        if (!g_start_tunnel) {
+        if (!g_active_engine.start_tunnel && !g_active_engine.start_tunnel_v2) {
             LOGE("nativeStartTunnel called but no engine loaded");
             return ENGINE_ERR_NOT_RUNNING;
         }
 
-        if (tunFd < 0 || !jConfigJson || !jProtector) {
-            LOGE("nativeStartTunnel invalid arguments");
+        // tunFd can be -1 if dynamic 2-phase creation callback is supplied
+        if ((tunFd < 0 && !jTunConfigCallback) || !jConfigJson || !jProtector) {
+            LOGE("nativeStartTunnel invalid arguments: tunFd=%d, hasConfigCb=%d",
+                 tunFd, jTunConfigCallback != nullptr);
             return ENGINE_ERR_INVALID_ARG;
         }
 
@@ -323,14 +405,32 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeStartTunnel(
             env->DeleteLocalRef(listenerClass);
         }
 
-        start_fn = g_start_tunnel;
+        // Register dynamic TUN configuration callback if provided
+        if (jTunConfigCallback) {
+            g_tun_config_cb_obj = env->NewGlobalRef(jTunConfigCallback);
+            jclass tunCbClass = env->GetObjectClass(jTunConfigCallback);
+            g_tun_config_method_id = env->GetMethodID(tunCbClass, "onTunConfigReady", "(Ljava/lang/String;)I");
+            env->DeleteLocalRef(tunCbClass);
+        }
+
+        start_fn = g_active_engine.start_tunnel;
+        start_v2_fn = g_active_engine.start_tunnel_v2;
     }
 
-    // Call start_tunnel OUTSIDE g_engine_mutex to eliminate any deadlock risk with callbacks
     const char* configJson = env->GetStringUTFChars(jConfigJson, nullptr);
-    LOGI("Starting native tunnel with tunFd=%d...", tunFd);
+    LOGI("Starting native tunnel (tunFd=%d, hasV2=%d, hasTunCb=%d)...",
+         tunFd, start_v2_fn != nullptr, jTunConfigCallback != nullptr);
 
-    int res = start_fn(tunFd, configJson, c_protect_callback, c_status_callback);
+    int res = ENGINE_SUCCESS;
+    if (start_v2_fn && jTunConfigCallback) {
+        res = start_v2_fn(tunFd, configJson, c_protect_callback, c_status_callback, c_tun_config_callback);
+    } else if (start_fn) {
+        res = start_fn(tunFd, configJson, c_protect_callback, c_status_callback);
+    } else if (start_v2_fn) {
+        res = start_v2_fn(tunFd, configJson, c_protect_callback, c_status_callback, nullptr);
+    } else {
+        res = ENGINE_ERR_NOT_RUNNING;
+    }
 
     env->ReleaseStringUTFChars(jConfigJson, configJson);
     return res;
@@ -348,7 +448,7 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeStopTunnel(
     fn_stop_tunnel stop_fn = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
-        stop_fn = g_stop_tunnel;
+        stop_fn = g_active_engine.stop_tunnel;
     }
 
     int res = ENGINE_SUCCESS;
@@ -378,7 +478,7 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeUpdateNetwork(
     fn_update_network update_fn = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
-        update_fn = g_update_network;
+        update_fn = g_active_engine.update_network;
     }
 
     if (!update_fn) {
@@ -404,7 +504,7 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeGetTunnelStats(
 
     {
         std::lock_guard<std::mutex> lock(g_engine_mutex);
-        stats_fn = g_get_tunnel_stats;
+        stats_fn = g_active_engine.get_tunnel_stats;
         stats_class = g_tunnel_stats_class;
         stats_ctor = g_tunnel_stats_ctor;
     }

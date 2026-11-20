@@ -1,6 +1,7 @@
 package com.bobrdobr.vpn.routing
 
 import org.bobrdobr.vpn.core.model.CidrRoute
+import org.bobrdobr.vpn.core.routing.CidrUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull

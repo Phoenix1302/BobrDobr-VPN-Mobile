@@ -3,6 +3,7 @@ package com.bobrdobr.vpn.routing
 import android.util.Log
 import org.bobrdobr.vpn.core.model.CidrRoute
 import org.bobrdobr.vpn.core.model.TunnelConfig
+import org.bobrdobr.vpn.core.routing.CidrUtils
 
 /**
  * DNS Leak Protection and safe DNS endpoint configuration for BobrDobr VPN.

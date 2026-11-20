@@ -33,6 +33,7 @@ type Profile struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 	SNI       string `json:"sni"`
+	LocalIP   string `json:"local_ip"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 	Group     string `json:"group"`
@@ -86,6 +87,7 @@ func ResetProfile() {
 	Prof.ConfigHash = ""
 	Prof.SNI = ""
 	Prof.Port = 0
+	Prof.LocalIP = ""
 	WebVpnCookie = ""
 	if Conn != nil {
 		_ = Conn.Close()
@@ -177,6 +179,12 @@ func PasswordAuth() error {
 	return nil
 }
 
+func xmlEscape(s string) string {
+	var buf bytes.Buffer
+	_ = xml.EscapeText(&buf, []byte(s))
+	return buf.String()
+}
+
 func tplPost(typ int, path string, dtd *proto.DTD) error {
 	tplBuffer := new(bytes.Buffer)
 	if typ == tplInit {
@@ -190,7 +198,14 @@ func tplPost(typ int, path string, dtd *proto.DTD) error {
 		if err != nil {
 			return err
 		}
-		_ = t.Execute(tplBuffer, Prof)
+		// Create a copy of Profile with escaped XML values for template rendering
+		profCopy := *Prof
+		profCopy.Username = xmlEscape(Prof.Username)
+		profCopy.Password = xmlEscape(Prof.Password)
+		profCopy.Group = xmlEscape(Prof.Group)
+		profCopy.TunnelGroup = xmlEscape(Prof.TunnelGroup)
+		profCopy.GroupAlias = xmlEscape(Prof.GroupAlias)
+		_ = t.Execute(tplBuffer, &profCopy)
 	}
 
 	if base.Cfg.LogLevel == "Debug" {

@@ -63,7 +63,12 @@ class NativeEngineController(
      * @param tunFd File descriptor detached from ParcelFileDescriptor.
      * @param protector Outer socket protection callback.
      */
-    fun startTunnel(config: TunnelConfig, tunFd: Int, protector: SocketProtector): Result<Unit> = synchronized(lock) {
+    fun startTunnel(
+        config: TunnelConfig,
+        tunFd: Int,
+        protector: SocketProtector,
+        tunConfigCallback: JniBridge.TunConfigCallback? = null
+    ): Result<Unit> = synchronized(lock) {
         DebugLogger.i(TAG, "startTunnel requested: protocol=${config.protocol.displayName}, server='${config.serverName}', tunFd=$tunFd")
 
         // Stop any currently running engine
@@ -83,7 +88,7 @@ class NativeEngineController(
 
         activeEngine = engine
 
-        val result = engine.start(tunFd, config.rawConfigJson, protector)
+        val result = engine.start(tunFd, config.rawConfigJson, protector, tunConfigCallback)
         if (result.isSuccess) {
             DebugLogger.i(TAG, "Native engine started successfully. Commencing stats polling.")
             startStatsPolling()
@@ -132,31 +137,40 @@ class NativeEngineController(
     private fun startStatsPolling() {
         stopStatsPolling()
         statsJob = scope.launch(Dispatchers.Default) {
-            var prevStats = TunnelStats.EMPTY
+            val initialEngine = synchronized(lock) { activeEngine }
+            var prevStats = initialEngine?.getStats() ?: TunnelStats.EMPTY
             var prevTime = System.currentTimeMillis()
+            var hasEmittedFirst = false
 
             while (isActive) {
+                if (!hasEmittedFirst) {
+                    onStatsUpdated(prevStats)
+                    hasEmittedFirst = true
+                }
                 delay(STATS_INTERVAL_MS)
                 val engine = synchronized(lock) { activeEngine } ?: break
                 val rawStats = engine.getStats()
                 val now = System.currentTimeMillis()
                 val deltaSec = (now - prevTime) / 1000.0
 
-                val downRate = if (deltaSec > 0 && prevStats.rxBytes > 0 && rawStats.rxBytes >= prevStats.rxBytes) {
+                val calculatedDown = if (deltaSec > 0 && rawStats.rxBytes >= prevStats.rxBytes) {
                     ((rawStats.rxBytes - prevStats.rxBytes) / deltaSec).toLong()
-                } else {
-                    0L
-                }
+                } else 0L
 
-                val upRate = if (deltaSec > 0 && prevStats.txBytes > 0 && rawStats.txBytes >= prevStats.txBytes) {
+                val calculatedUp = if (deltaSec > 0 && rawStats.txBytes >= prevStats.txBytes) {
                     ((rawStats.txBytes - prevStats.txBytes) / deltaSec).toLong()
-                } else {
-                    0L
-                }
+                } else 0L
+
+                // If native engine provides instantaneous speed in bps (bits per sec), convert to bytes/sec
+                val nativeDownBytes = if (rawStats.rxSpeedBytesPerSec > 0) rawStats.rxSpeedBytesPerSec / 8 else 0L
+                val nativeUpBytes = if (rawStats.txSpeedBytesPerSec > 0) rawStats.txSpeedBytesPerSec / 8 else 0L
+
+                val finalDown = if (calculatedDown > 0) calculatedDown else nativeDownBytes
+                val finalUp = if (calculatedUp > 0) calculatedUp else nativeUpBytes
 
                 val computedStats = rawStats.copy(
-                    rxSpeedBytesPerSec = downRate,
-                    txSpeedBytesPerSec = upRate
+                    rxSpeedBytesPerSec = finalDown,
+                    txSpeedBytesPerSec = finalUp
                 )
 
                 prevStats = rawStats

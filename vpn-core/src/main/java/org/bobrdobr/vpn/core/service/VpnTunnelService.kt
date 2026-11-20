@@ -10,7 +10,6 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -29,16 +28,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.bobrdobr.vpn.core.engine.JniBridge
 import org.bobrdobr.vpn.core.engine.NativeEngineController
 import org.bobrdobr.vpn.core.logger.DebugLogger
+import org.bobrdobr.vpn.core.model.CidrRoute
 import org.bobrdobr.vpn.core.model.TunnelConfig
 import org.bobrdobr.vpn.core.model.TunnelStats
 import org.bobrdobr.vpn.core.model.VpnProtocol
 import org.bobrdobr.vpn.core.model.VpnState
+import org.bobrdobr.vpn.core.routing.CidrUtils
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * BobrDobr VPN Core Tunnel Service.
@@ -46,7 +53,7 @@ import java.net.Socket
  * Implements Android [VpnService] and [SocketProtector].
  * Manages foreground service lifecycle, notification updates, TUN descriptor capture via
  * ParcelFileDescriptor.detachFd(), seamless network roaming without TUN re-creation,
- * and routing loop prevention via VpnService.protect(fd).
+ * 2-phase dynamic TUN initialization for CSTP, and routing loop prevention via VpnService.protect(fd).
  */
 class VpnTunnelService : VpnService(), SocketProtector {
 
@@ -75,24 +82,15 @@ class VpnTunnelService : VpnService(), SocketProtector {
         val currentConfig: TunnelConfig? get() = _currentConfig
 
         // Thread-safe in-memory cache for resolved server hostnames -> IPv4
-        private val resolvedIpCache = java.util.concurrent.ConcurrentHashMap<String, String>().apply {
-            put("bobr.netphoenix.ru", "176.108.243.97")
-        }
+        private val resolvedIpCache = ConcurrentHashMap<String, String>()
 
         /**
          * Control whether UI is visible to optimize battery consumption by pausing ping monitoring.
+         * Updates in-memory StateFlow without redundant service starts.
          */
         fun setUiVisibility(context: Context, isVisible: Boolean) {
             _isUiVisible.value = isVisible
-            try {
-                val intent = Intent(context, VpnTunnelService::class.java).apply {
-                    action = ACTION_SET_UI_VISIBILITY
-                    putExtra(EXTRA_UI_VISIBLE, isVisible)
-                }
-                context.startService(intent)
-            } catch (e: Exception) {
-                Log.d(TAG, "VpnTunnelService not running or cannot startService for UI visibility: ${e.message}")
-            }
+            DebugLogger.d(TAG, "setUiVisibility updated to $isVisible")
         }
 
         /**
@@ -111,17 +109,27 @@ class VpnTunnelService : VpnService(), SocketProtector {
         }
 
         /**
-         * Helper method to stop the VPN service.
+         * Helper method to stop the VPN service safely.
          */
         fun stop(context: Context) {
-            val intent = Intent(context, VpnTunnelService::class.java).apply {
-                action = ACTION_DISCONNECT
+            if (_vpnState.value is VpnState.Disconnected) {
+                DebugLogger.d(TAG, "stop() called but service is already Disconnected, ignoring")
+                return
             }
-            context.startService(intent)
+            try {
+                val intent = Intent(context, VpnTunnelService::class.java).apply {
+                    action = ACTION_DISCONNECT
+                }
+                context.startService(intent)
+            } catch (e: Exception) {
+                DebugLogger.w(TAG, "Failed to send ACTION_DISCONNECT to service: ${e.message}")
+            }
         }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val tunnelMutex = Mutex()
+    private val sessionCounter = AtomicLong(0)
 
     private lateinit var notificationManager: NotificationManager
     private lateinit var connectivityManager: ConnectivityManager
@@ -129,10 +137,16 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
     private var activeConfig: TunnelConfig? = null
     private var currentPhysicalNetwork: Network? = null
+    private var lastUnderlyingNetworkHandle: Long = -1L
+
     private var tunPfd: ParcelFileDescriptor? = null
-    private var activeTunRawFd: Int = -1
+    private val activeTunRawFd = AtomicInteger(-1)
+
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pingMonitorJob: Job? = null
+    private var watchdogJob: Job? = null
+    private var lastMeasuredPingMs: Long = 0L
+    private var lastNotifiedState: VpnState? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -163,7 +177,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
                 }
             },
             onStatsUpdated = { stats ->
-                _tunnelStats.value = stats
+                val effectivePing = if (stats.pingMs > 0) stats.pingMs else lastMeasuredPingMs
+                _tunnelStats.value = stats.copy(pingMs = effectivePing)
             }
         )
 
@@ -191,27 +206,35 @@ class VpnTunnelService : VpnService(), SocketProtector {
                     return START_NOT_STICKY
                 }
 
+                watchdogJob?.cancel()
+                val sessionId = sessionCounter.incrementAndGet()
+
                 activeConfig = config
                 _currentConfig = config
                 DebugLogger.i(
                     TAG,
-                    "Starting tunnel connection for server '${config.serverName}' (${config.protocol.displayName}), endpoint=${config.serverAddress}:${config.serverPort}, vIP=${config.ipv4Address}/${config.ipv4Prefix}"
+                    "Starting tunnel connection [session=$sessionId] for '${config.serverName}' (${config.protocol.displayName}), endpoint=${config.serverAddress}:${config.serverPort}, vIP=${config.ipv4Address}/${config.ipv4Prefix}"
                 )
 
                 startForegroundNotification(VpnState.Connecting(config.protocol, config.serverName))
 
                 serviceScope.launch(Dispatchers.IO) {
-                    try {
-                        establishTunnel(config)
-                    } catch (e: Exception) {
-                        DebugLogger.e(TAG, "Failed to establish tunnel: ${e.message}", e)
-                        _vpnState.value = VpnState.Error(
-                            message = e.message ?: "Failed to establish TUN interface",
-                            protocol = config.protocol,
-                            throwable = e,
-                            canRetry = true
-                        )
-                        updateNotification(_vpnState.value)
+                    tunnelMutex.withLock {
+                        try {
+                            establishTunnel(config, sessionId)
+                        } catch (e: Exception) {
+                            DebugLogger.e(TAG, "Failed to establish tunnel: ${e.message}", e)
+                            if (sessionId == sessionCounter.get()) {
+                                val errState = VpnState.Error(
+                                    message = e.message ?: "Failed to establish TUN interface",
+                                    protocol = config.protocol,
+                                    throwable = e,
+                                    canRetry = true
+                                )
+                                _vpnState.value = errState
+                                updateNotification(errState)
+                            }
+                        }
                     }
                 }
             }
@@ -291,15 +314,134 @@ class VpnTunnelService : VpnService(), SocketProtector {
     }
 
     /**
-     * Creates and configures the Android TUN interface using [VpnService.Builder],
-     * detaches the integer file descriptor via [ParcelFileDescriptor.detachFd],
+     * Dynamic two-phase TUN initialization callback for CSTP (OpenConnect / AnyConnect).
+     * Invoked from native engine thread when server delivers dynamic parameters.
+     */
+    private fun onTunConfigReady(jsonStr: String): Int {
+        DebugLogger.i(TAG, "onTunConfigReady: received dynamic CSTP tunnel config: $jsonStr")
+        val config = activeConfig ?: return -1
+        return try {
+            val json = org.json.JSONObject(jsonStr)
+            val ipv4 = json.optString("ipv4", config.ipv4Address)
+            val ipv4Prefix = json.optInt("ipv4_prefix", config.ipv4Prefix)
+            val mtu = json.optInt("mtu", config.mtu).coerceIn(1280, 1500)
+
+            val dynamicDns = mutableListOf<String>()
+            val dnsArray = json.optJSONArray("dns")
+            if (dnsArray != null) {
+                for (i in 0 until dnsArray.length()) {
+                    val d = dnsArray.getString(i).trim()
+                    if (d.isNotEmpty()) dynamicDns.add(d)
+                }
+            }
+            val effectiveDns = if (dynamicDns.isNotEmpty()) dynamicDns else config.dnsServers.ifEmpty { listOf("1.1.1.1") }
+
+            val splitInclude = mutableListOf<CidrRoute>()
+            val incArray = json.optJSONArray("split_include")
+            if (incArray != null) {
+                for (i in 0 until incArray.length()) {
+                    val s = incArray.getString(i).trim()
+                    val parts = s.split("/")
+                    if (parts.size == 2) {
+                        val prefix = parts[1].toIntOrNull() ?: 32
+                        splitInclude.add(CidrRoute(parts[0], prefix))
+                    }
+                }
+            }
+
+            val splitExclude = mutableListOf<CidrRoute>()
+            val excArray = json.optJSONArray("split_exclude")
+            if (excArray != null) {
+                for (i in 0 until excArray.length()) {
+                    val s = excArray.getString(i).trim()
+                    val parts = s.split("/")
+                    if (parts.size == 2) {
+                        val prefix = parts[1].toIntOrNull() ?: 32
+                        splitExclude.add(CidrRoute(parts[0], prefix))
+                    }
+                }
+            }
+
+            val baseRoutes = if (splitInclude.isNotEmpty()) {
+                splitInclude
+            } else if (config.routes.isNotEmpty()) {
+                config.routes
+            } else {
+                listOf(CidrRoute.DEFAULT_IPV4)
+            }
+
+            val combinedExcludes = splitExclude + config.bypassSubnets
+            val finalRoutes = CidrUtils.subtractRouteLists(baseRoutes, combinedExcludes)
+
+            val builder = Builder().apply {
+                setSession("БобрДобр VPN: ${config.serverName}")
+                setMtu(mtu)
+                addAddress(ipv4, ipv4Prefix)
+
+                for (dns in effectiveDns) {
+                    try {
+                        addDnsServer(dns)
+                        DebugLogger.d(TAG, "Added dynamic DNS server: $dns")
+                    } catch (e: Exception) {
+                        DebugLogger.w(TAG, "Failed to add dynamic DNS server $dns: ${e.message}")
+                    }
+                }
+
+                for (route in finalRoutes) {
+                    try {
+                        addRoute(route.address, route.prefix)
+                    } catch (e: Exception) {
+                        DebugLogger.w(TAG, "Failed to add dynamic route $route: ${e.message}")
+                    }
+                }
+
+                // Explicit /32 host routes for active DNS
+                for (dns in effectiveDns) {
+                    try {
+                        if (dns.contains(".")) {
+                            addRoute(dns, 32)
+                        } else if (dns.contains(":")) {
+                            addRoute(dns, 128)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                for (pkg in config.allowedApplications) {
+                    try { addAllowedApplication(pkg) } catch (_: Exception) {}
+                }
+                for (pkg in config.disallowedApplications) {
+                    try { addDisallowedApplication(pkg) } catch (_: Exception) {}
+                }
+                // Blocking mode preserved
+            }
+
+            closeTunResources()
+            val pfd = builder.establish() ?: throw IllegalStateException("Builder.establish() returned null in onTunConfigReady")
+            tunPfd = pfd
+            val rawFd = pfd.detachFd()
+            activeTunRawFd.set(rawFd)
+            DebugLogger.i(TAG, "Dynamic TUN established successfully. Detached fd=$rawFd")
+            rawFd
+        } catch (e: Exception) {
+            DebugLogger.e(TAG, "Failed to establish dynamic TUN: ${e.message}", e)
+            -1
+        }
+    }
+
+    /**
+     * Creates and configures the Android TUN interface,
+     * or prepares 2-phase dynamic initialization callback for OpenConnect,
      * and delegates control to [NativeEngineController].
      */
-    @Synchronized
-    private fun establishTunnel(config: TunnelConfig) {
-        DebugLogger.i(TAG, "Establishing TUN interface: server='${config.serverName}' (${config.protocol.displayName}), MTU=${config.mtu}...")
+    private fun establishTunnel(config: TunnelConfig, sessionId: Long) {
+        if (sessionId != sessionCounter.get()) {
+            DebugLogger.w(TAG, "Session ID mismatch ($sessionId vs ${sessionCounter.get()}), aborting establishTunnel")
+            return
+        }
 
-        // Detailed protocol-specific configuration validation
+        DebugLogger.i(TAG, "Establishing TUN interface [session=$sessionId]: server='${config.serverName}' (${config.protocol.displayName}), MTU=${config.mtu}...")
+
+        // Protocol validation
         if (config.protocol == VpnProtocol.AMNEZIA_WG || config.protocol == VpnProtocol.WIREGUARD) {
             if (config.rawConfigJson.isBlank()) {
                 val err = "CRITICAL: AmneziaWG configuration text is EMPTY! Engine cannot start."
@@ -311,9 +453,6 @@ class VpnTunnelService : VpnService(), SocketProtector {
             }
             if (!config.rawConfigJson.contains("[Interface]", ignoreCase = true)) {
                 DebugLogger.w(TAG, "WARNING: AmneziaWG configuration text does not contain '[Interface]' section header!")
-            }
-            if (config.serverAddress.isBlank()) {
-                DebugLogger.w(TAG, "WARNING: AmneziaWG serverAddress is blank in config metadata.")
             }
         } else if (config.protocol == VpnProtocol.OPENCONNECT) {
             if (config.serverAddress.isBlank()) {
@@ -327,7 +466,6 @@ class VpnTunnelService : VpnService(), SocketProtector {
         var effectiveRawJson = config.rawConfigJson
 
         // Pre-resolve server hostname to IPv4 address BEFORE establish()
-        // so native code does not fail when physical DNS queries are captured by TUN
         val resolvedServerIp = resolvePhysicalServerIp(config.serverAddress)
         if (resolvedServerIp == null && config.serverAddress.isNotBlank() && !config.serverAddress.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
             val errMsg = "Не удалось определить IP-адрес сервера '${config.serverAddress}'. Проверьте интернет-соединение."
@@ -367,7 +505,6 @@ class VpnTunnelService : VpnService(), SocketProtector {
                         json.put("endpoint", "$resolvedServerIp:$epPort")
                     }
 
-                    // Also rewrite embedded INI text if any inside JSON
                     for (key in listOf("config_text", "config_content", "config", "configText", "raw_config")) {
                         if (json.has(key)) {
                             val embedded = json.getString(key)
@@ -389,7 +526,6 @@ class VpnTunnelService : VpnService(), SocketProtector {
                     effectiveRawJson = json.toString()
                     DebugLogger.i(TAG, "Replaced server domain with resolved IP $resolvedServerIp in config JSON")
                 } else {
-                    // Raw INI text format (WireGuard / AmneziaWG)
                     val port = config.serverPort.takeIf { it > 0 } ?: 51820
                     val endpointRegex = Regex("(?im)^(\\s*Endpoint\\s*=\\s*)([^:\\s#;]+)(?::(\\d+))?")
                     if (endpointRegex.containsMatchIn(effectiveRawJson)) {
@@ -419,99 +555,124 @@ class VpnTunnelService : VpnService(), SocketProtector {
             effectiveConfig = effectiveConfig.copy(rawConfigJson = effectiveRawJson)
         }
 
-        val builder = Builder().apply {
-            setSession("БобрДобр VPN: ${effectiveConfig.serverName}")
-            setMtu(effectiveConfig.mtu)
+        activeConfig = effectiveConfig
+        _currentConfig = effectiveConfig
 
-            // IPv4 virtual address
-            try {
-                addAddress(effectiveConfig.ipv4Address, effectiveConfig.ipv4Prefix)
-                DebugLogger.d(TAG, "Added virtual IPv4: ${effectiveConfig.ipv4Address}/${effectiveConfig.ipv4Prefix}")
-            } catch (e: Exception) {
-                DebugLogger.e(TAG, "Invalid IPv4 address: ${effectiveConfig.ipv4Address}/${effectiveConfig.ipv4Prefix}", e)
-                throw e
-            }
-
-            // Optional IPv6 virtual address
-            if (!effectiveConfig.ipv6Address.isNullOrEmpty()) {
-                try {
-                    addAddress(effectiveConfig.ipv6Address, effectiveConfig.ipv6Prefix)
-                    DebugLogger.d(TAG, "Added virtual IPv6: ${effectiveConfig.ipv6Address}/${effectiveConfig.ipv6Prefix}")
-                } catch (e: Exception) {
-                    DebugLogger.w(TAG, "Could not add IPv6 address ${effectiveConfig.ipv6Address}: ${e.message}")
-                }
-            }
-
-            // DNS Servers: Enforce DNS specified by configuration (critical for server-side domain routing)
-            val effectiveDns = if (effectiveConfig.dnsServers.isNotEmpty()) {
-                DebugLogger.i(TAG, "Strictly applying server-side DNS from TunnelConfig: ${effectiveConfig.dnsServers}")
-                effectiveConfig.dnsServers
-            } else {
-                DebugLogger.w(TAG, "No DNS specified in config, falling back to 1.1.1.1")
-                listOf("1.1.1.1")
-            }
-
-            for (dns in effectiveDns) {
-                try {
-                    addDnsServer(dns)
-                    DebugLogger.d(TAG, "Added DNS server to VpnService.Builder: $dns")
-                } catch (e: Exception) {
-                    DebugLogger.w(TAG, "Failed to add DNS server $dns: ${e.message}")
-                }
-            }
-
-            // Routes (Default 0.0.0.0/0 and ::/0 for full tunnel)
-            for (route in effectiveConfig.routes) {
-                try {
-                    addRoute(route.address, route.prefix)
-                } catch (e: Exception) {
-                    DebugLogger.w(TAG, "Failed to add route $route: ${e.message}")
-                }
-            }
-            DebugLogger.d(TAG, "Configured ${effectiveConfig.routes.size} tunnel routes")
-
-            // Per-App Split Tunneling: Whitelist
-            for (pkg in effectiveConfig.allowedApplications) {
-                try {
-                    addAllowedApplication(pkg)
-                } catch (e: Exception) {
-                    DebugLogger.w(TAG, "Failed to add allowed application $pkg: ${e.message}")
-                }
-            }
-
-            // Per-App Split Tunneling: Blacklist (Bypass)
-            for (pkg in effectiveConfig.disallowedApplications) {
-                try {
-                    addDisallowedApplication(pkg)
-                } catch (e: Exception) {
-                    DebugLogger.w(TAG, "Failed to add disallowed application $pkg: ${e.message}")
-                }
-            }
-
-            // Non-blocking mode for efficient async epoll / mio packet loop
-            setBlocking(false)
-        }
-
-        // Ensure any previously lingering TUN interface is thoroughly torn down
         closeTunResources()
 
-        DebugLogger.i(TAG, "Invoking VpnService.Builder.establish()...")
-        val pfd = builder.establish()
-            ?: run {
-                val err = "VpnService.Builder.establish() returned null. Is VPN permission granted?"
-                DebugLogger.e(TAG, err)
-                throw IllegalStateException(err)
+        val tunConfigCallback = if (effectiveConfig.protocol == VpnProtocol.OPENCONNECT) {
+            JniBridge.TunConfigCallback { configJson ->
+                onTunConfigReady(configJson)
+            }
+        } else {
+            null
+        }
+
+        val rawFd: Int
+        if (effectiveConfig.protocol == VpnProtocol.OPENCONNECT) {
+            // OpenConnect handles dynamic 2-phase TUN creation via tunConfigCallback
+            rawFd = -1
+            DebugLogger.i(TAG, "OpenConnect starting with dynamic 2-phase TUN callback")
+        } else {
+            // WireGuard / AmneziaWG: establish TUN immediately
+            val builder = Builder().apply {
+                setSession("БобрДобр VPN: ${effectiveConfig.serverName}")
+                setMtu(effectiveConfig.mtu)
+
+                try {
+                    addAddress(effectiveConfig.ipv4Address, effectiveConfig.ipv4Prefix)
+                    DebugLogger.d(TAG, "Added virtual IPv4: ${effectiveConfig.ipv4Address}/${effectiveConfig.ipv4Prefix}")
+                } catch (e: Exception) {
+                    DebugLogger.e(TAG, "Invalid IPv4 address: ${effectiveConfig.ipv4Address}/${effectiveConfig.ipv4Prefix}", e)
+                    throw e
+                }
+
+                if (!effectiveConfig.ipv6Address.isNullOrEmpty()) {
+                    try {
+                        addAddress(effectiveConfig.ipv6Address, effectiveConfig.ipv6Prefix)
+                        DebugLogger.d(TAG, "Added virtual IPv6: ${effectiveConfig.ipv6Address}/${effectiveConfig.ipv6Prefix}")
+                    } catch (e: Exception) {
+                        DebugLogger.w(TAG, "Could not add IPv6 address ${effectiveConfig.ipv6Address}: ${e.message}")
+                    }
+                }
+
+                val effectiveDns = if (effectiveConfig.dnsServers.isNotEmpty()) {
+                    DebugLogger.i(TAG, "Strictly applying server-side DNS from TunnelConfig: ${effectiveConfig.dnsServers}")
+                    effectiveConfig.dnsServers
+                } else {
+                    DebugLogger.w(TAG, "No DNS specified in config, falling back to 1.1.1.1")
+                    listOf("1.1.1.1")
+                }
+
+                for (dns in effectiveDns) {
+                    try {
+                        addDnsServer(dns)
+                        DebugLogger.d(TAG, "Added DNS server to VpnService.Builder: $dns")
+                    } catch (e: Exception) {
+                        DebugLogger.w(TAG, "Failed to add DNS server $dns: ${e.message}")
+                    }
+                }
+
+                for (route in effectiveConfig.routes) {
+                    try {
+                        addRoute(route.address, route.prefix)
+                    } catch (e: Exception) {
+                        DebugLogger.w(TAG, "Failed to add route $route: ${e.message}")
+                    }
+                }
+                DebugLogger.d(TAG, "Configured ${effectiveConfig.routes.size} tunnel routes")
+
+                // Explicit /32 host routes for active DNS
+                for (dns in effectiveDns) {
+                    try {
+                        if (dns.contains(".")) {
+                            addRoute(dns, 32)
+                        } else if (dns.contains(":")) {
+                            addRoute(dns, 128)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                for (pkg in effectiveConfig.allowedApplications) {
+                    try {
+                        addAllowedApplication(pkg)
+                    } catch (e: Exception) {
+                        DebugLogger.w(TAG, "Failed to add allowed application $pkg: ${e.message}")
+                    }
+                }
+
+                for (pkg in effectiveConfig.disallowedApplications) {
+                    try {
+                        addDisallowedApplication(pkg)
+                    } catch (e: Exception) {
+                        DebugLogger.w(TAG, "Failed to add disallowed application $pkg: ${e.message}")
+                    }
+                }
+
+                // Blocking mode preserved (setBlocking(false) removed)
             }
 
-        tunPfd = pfd
+            val pfd = builder.establish()
+                ?: run {
+                    val err = "VpnService.Builder.establish() returned null. Is VPN permission granted?"
+                    DebugLogger.e(TAG, err)
+                    throw IllegalStateException(err)
+                }
 
-        // Detach integer fd for native engine ownership and track it for guaranteed cleanup
-        val rawFd = pfd.detachFd()
-        activeTunRawFd = rawFd
-        DebugLogger.i(TAG, "Successfully captured TUN file descriptor: $rawFd")
+            tunPfd = pfd
+            rawFd = pfd.detachFd()
+            activeTunRawFd.set(rawFd)
+            DebugLogger.i(TAG, "Successfully captured TUN file descriptor: $rawFd")
+        }
+
+        if (sessionId != sessionCounter.get()) {
+            DebugLogger.w(TAG, "Session ID changed during setup, aborting engine launch")
+            closeTunResources()
+            return
+        }
 
         // Launch native engine
-        val startResult = engineController.startTunnel(effectiveConfig, rawFd, this)
+        val startResult = engineController.startTunnel(effectiveConfig, rawFd, this, tunConfigCallback)
         if (startResult.isFailure) {
             val err = startResult.exceptionOrNull()?.message ?: "Native engine failed to start"
             DebugLogger.e(TAG, "engineController.startTunnel failed: $err")
@@ -519,13 +680,12 @@ class VpnTunnelService : VpnService(), SocketProtector {
             throw IllegalStateException(err)
         }
 
-        _currentConfig = effectiveConfig
         DebugLogger.i(TAG, "Native engine spawned. Waiting for cryptographic handshake confirmation...")
 
         // Timeout watchdog: If native handshake does not succeed within 25 seconds, report error
-        serviceScope.launch {
+        watchdogJob = serviceScope.launch {
             delay(25000L)
-            if (_vpnState.value is VpnState.Connecting && _currentConfig == effectiveConfig) {
+            if (sessionId == sessionCounter.get() && _vpnState.value is VpnState.Connecting) {
                 val errMsg = "Сервер не ответил на запрос подключения (таймаут рукопожатия). Проверьте настройки или выберите другой шлюз."
                 DebugLogger.w(TAG, errMsg)
                 val timeoutState = VpnState.Error(
@@ -557,51 +717,46 @@ class VpnTunnelService : VpnService(), SocketProtector {
      * Monitors default physical networks for zero-interruption roaming (e.g. Wi-Fi <-> Cellular).
      */
     private fun registerNetworkMonitor() {
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-            .build()
-
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                DebugLogger.i(TAG, "Physical network available: $network (handle=${network.networkHandle})")
-                currentPhysicalNetwork = network
-                handleNetworkHandoff(network)
+                handleNetworkChange(network)
             }
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-                ) {
-                    DebugLogger.d(TAG, "Physical network capabilities changed: $network")
-                    currentPhysicalNetwork = network
-                    handleNetworkHandoff(network)
+                if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                    handleNetworkChange(network)
                 }
             }
 
             override fun onLost(network: Network) {
-                DebugLogger.w(TAG, "Physical network lost: $network")
+                DebugLogger.w(TAG, "Default physical network lost: $network")
                 if (currentPhysicalNetwork == network) {
                     currentPhysicalNetwork = null
+                    lastUnderlyingNetworkHandle = -1L
                 }
             }
         }
 
         try {
-            connectivityManager.registerNetworkCallback(request, networkCallback!!)
-            DebugLogger.i(TAG, "Registered physical network monitor")
+            connectivityManager.registerDefaultNetworkCallback(networkCallback!!)
+            DebugLogger.i(TAG, "Registered physical network monitor via registerDefaultNetworkCallback")
         } catch (e: Exception) {
-            DebugLogger.e(TAG, "Failed to register NetworkCallback: ${e.message}", e)
+            DebugLogger.e(TAG, "Failed to register default NetworkCallback: ${e.message}", e)
         }
     }
 
-    private fun handleNetworkHandoff(network: Network) {
-        if (_vpnState.value is VpnState.Connected) {
-            DebugLogger.i(TAG, "Handling network handoff to $network (handle=${network.networkHandle})")
+    private fun handleNetworkChange(network: Network) {
+        currentPhysicalNetwork = network
+        val handle = network.networkHandle
+        if (handle != lastUnderlyingNetworkHandle) {
+            lastUnderlyingNetworkHandle = handle
+            DebugLogger.i(TAG, "Physical network changed to $network (handle=$handle)")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                 setUnderlyingNetworks(arrayOf(network))
             }
-            engineController.updateNetwork(network.networkHandle)
+            if (_vpnState.value is VpnState.Connected) {
+                engineController.updateNetwork(handle)
+            }
         }
     }
 
@@ -610,15 +765,14 @@ class VpnTunnelService : VpnService(), SocketProtector {
      * This signals the Linux kernel to immediately remove the virtual tunX network interface.
      */
     private fun closeTunResources() {
-        val fd = activeTunRawFd
-        activeTunRawFd = -1
+        val fd = activeTunRawFd.getAndSet(-1)
         if (fd >= 0) {
             try {
                 // Adopting the detached fd and closing it triggers the POSIX close(fd) syscall on /dev/tun
                 ParcelFileDescriptor.adoptFd(fd).close()
                 DebugLogger.i(TAG, "Successfully adopted and closed raw TUN fd=$fd")
             } catch (e: Exception) {
-                DebugLogger.w(TAG, "Error closing adopted raw TUN fd=$fd: ${e.message}")
+                DebugLogger.w(TAG, "Failed to close raw TUN fd=$fd: ${e.message}")
             }
         }
 
@@ -633,27 +787,35 @@ class VpnTunnelService : VpnService(), SocketProtector {
     private fun stopTunnelGracefully() {
         DebugLogger.i(TAG, "stopTunnelGracefully: tearing down session")
         stopPingMonitor()
+        watchdogJob?.cancel()
+        watchdogJob = null
+        sessionCounter.incrementAndGet()
+
         _currentConfig = null
         _vpnState.value = VpnState.Disconnecting(activeConfig?.protocol)
         updateNotification(_vpnState.value)
 
         serviceScope.launch(Dispatchers.IO) {
-            try {
-                engineController.stopTunnel()
-            } catch (e: Exception) {
-                DebugLogger.w(TAG, "Error stopping native engine: ${e.message}", e)
-            }
+            tunnelMutex.withLock {
+                try {
+                    engineController.stopTunnel()
+                } catch (e: Exception) {
+                    DebugLogger.w(TAG, "Error stopping native engine: ${e.message}", e)
+                }
 
-            closeTunResources()
-            activeConfig = null
+                closeTunResources()
+                activeConfig = null
+                lastMeasuredPingMs = 0L
 
-            _vpnState.value = VpnState.Disconnected
-            _tunnelStats.value = TunnelStats.EMPTY
-            DebugLogger.i(TAG, "Tunnel teardown completed. State=DISCONNECTED")
+                _vpnState.value = VpnState.Disconnected
+                _tunnelStats.value = TunnelStats.EMPTY
+                updateNotification(VpnState.Disconnected)
+                DebugLogger.i(TAG, "Tunnel teardown completed. State=DISCONNECTED")
 
-            serviceScope.launch(Dispatchers.Main) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                serviceScope.launch(Dispatchers.Main) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
     }
@@ -662,6 +824,9 @@ class VpnTunnelService : VpnService(), SocketProtector {
         DebugLogger.i(TAG, "VpnTunnelService onDestroy()")
 
         stopPingMonitor()
+        watchdogJob?.cancel()
+        watchdogJob = null
+        sessionCounter.incrementAndGet()
 
         try {
             networkCallback?.let { connectivityManager.unregisterNetworkCallback(it) }
@@ -669,13 +834,16 @@ class VpnTunnelService : VpnService(), SocketProtector {
             DebugLogger.w(TAG, "Error unregistering network callback: ${e.message}", e)
         }
 
-        try {
-            engineController.stopTunnel()
-        } catch (e: Exception) {
-            DebugLogger.w(TAG, "Error stopping native engine in onDestroy: ${e.message}")
-        }
-
         closeTunResources()
+
+        val controller = engineController
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                controller.stopTunnel()
+            } catch (e: Exception) {
+                DebugLogger.w(TAG, "Error stopping native engine in onDestroy: ${e.message}")
+            }
+        }
 
         _currentConfig = null
         _vpnState.value = VpnState.Disconnected
@@ -688,9 +856,6 @@ class VpnTunnelService : VpnService(), SocketProtector {
     private fun startPingMonitor(config: TunnelConfig) {
         stopPingMonitor()
         pingMonitorJob = serviceScope.launch(Dispatchers.IO) {
-            // Determine gateway address inside tunnel:
-            // 1. First DNS server from config (e.g. 10.8.0.1)
-            // 2. Or replace last octet of client IPv4 with .1 (e.g. 10.8.0.2 -> 10.8.0.1)
             val gatewayIp = config.dnsServers.firstOrNull() ?: run {
                 val parts = config.ipv4Address.split(".")
                 if (parts.size == 4) "${parts[0]}.${parts[1]}.${parts[2]}.1" else "10.8.0.1"
@@ -710,7 +875,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
                 val startTime = SystemClock.elapsedRealtime()
                 var rtt = -1L
 
-                // 1. Try fast UDP DNS query to gateway (DNS server on port 53)
+                // 1. Fast UDP DNS query to gateway
                 try {
                     java.net.DatagramSocket().use { ds ->
                         ds.soTimeout = 800
@@ -723,7 +888,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
                             0x00, 0x01,                   // Type A
                             0x00, 0x01                    // Class IN
                         )
-                        val sendPacket = java.net.DatagramPacket(dnsQuery, dnsQuery.size, java.net.InetAddress.getByName(gatewayIp), 53)
+                        val sendPacket = java.net.DatagramPacket(dnsQuery, dnsQuery.size, InetAddress.getByName(gatewayIp), 53)
                         ds.send(sendPacket)
                         val buf = ByteArray(512)
                         val recvPacket = java.net.DatagramPacket(buf, buf.size)
@@ -742,12 +907,12 @@ class VpnTunnelService : VpnService(), SocketProtector {
                             rtt = SystemClock.elapsedRealtime() - tcpStart
                         }
                     } catch (e: java.net.ConnectException) {
-                        // RST packet from gateway confirms bidirectional path through tunnel
                         rtt = SystemClock.elapsedRealtime() - startTime
                     } catch (_: Exception) {}
                 }
 
                 if (rtt in 1..2500) {
+                    lastMeasuredPingMs = rtt
                     _tunnelStats.value = _tunnelStats.value.copy(pingMs = rtt)
                     DebugLogger.v(TAG, "In-tunnel gateway ping to $gatewayIp: ${rtt}ms")
                 }
@@ -785,6 +950,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
     }
 
     private fun startForegroundNotification(state: VpnState) {
+        lastNotifiedState = state
         val notification = buildNotification(state)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceCompat.startForeground(
@@ -799,6 +965,10 @@ class VpnTunnelService : VpnService(), SocketProtector {
     }
 
     private fun updateNotification(state: VpnState) {
+        if (lastNotifiedState == state) {
+            return
+        }
+        lastNotifiedState = state
         val notification = buildNotification(state)
         notificationManager.notify(NOTIFICATION_ID, notification)
     }
@@ -843,7 +1013,6 @@ class VpnTunnelService : VpnService(), SocketProtector {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Launch app activity when clicking notification
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
         val contentPendingIntent = if (launchIntent != null) {
             PendingIntent.getActivity(

@@ -7,8 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	tls "github.com/refraction-networking/utls"
@@ -35,7 +35,11 @@ func initTunnelParams() {
 		session.Sess.SessionToken = sessionToken
 	}
 	cstpReqHeaders["Cookie"] = "webvpn=" + sessionToken
-	cstpReqHeaders["X-CSTP-Local-VPNAddress-IP4"] = base.LocalInterface.Ip4
+	if auth.Prof.LocalIP != "" {
+		cstpReqHeaders["X-CSTP-Local-VPNAddress-IP4"] = auth.Prof.LocalIP
+	} else {
+		delete(cstpReqHeaders, "X-CSTP-Local-VPNAddress-IP4")
+	}
 
 	session.Sess.PreMasterSecret, _ = utils.MakeMasterSecret()
 	cstpReqHeaders["X-DTLS-Master-Secret"] = hex.EncodeToString(session.Sess.PreMasterSecret)
@@ -130,7 +134,11 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 
 	cSess := session.Sess.NewConnSession(&resp.Header)
 	remoteAddr := auth.Conn.RemoteAddr().String()
-	cSess.ServerAddress = strings.Split(remoteAddr, ":")[0]
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		cSess.ServerAddress = host
+	} else {
+		cSess.ServerAddress = remoteAddr
+	}
 	cSess.Hostname = auth.Prof.Host
 	cSess.TLSCipherSuite = tls.CipherSuiteName(auth.Conn.ConnectionState().CipherSuite)
 

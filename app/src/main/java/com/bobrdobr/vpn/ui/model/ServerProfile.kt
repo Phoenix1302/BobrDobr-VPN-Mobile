@@ -69,7 +69,7 @@ data class ServerProfile(
             } catch (_: Exception) {}
         }
 
-        if (protocol == VpnProtocol.AMNEZIA_WG && !effectiveConfigText.isNullOrBlank()) {
+        if ((protocol == VpnProtocol.AMNEZIA_WG || protocol == VpnProtocol.WIREGUARD) && !effectiveConfigText.isNullOrBlank()) {
             val validation = ConfigValidator.validateAwg(effectiveConfigText)
             if (validation is ValidationResult.SuccessAwg) {
                 if (validation.clientAddress.isNotBlank()) {
@@ -87,7 +87,7 @@ data class ServerProfile(
             }
         }
 
-        val effectiveRawJson = if (protocol == VpnProtocol.AMNEZIA_WG && !effectiveConfigText.isNullOrBlank()) {
+        val effectiveRawJson = if ((protocol == VpnProtocol.AMNEZIA_WG || protocol == VpnProtocol.WIREGUARD) && !effectiveConfigText.isNullOrBlank()) {
             effectiveConfigText
         } else if (!rawConfigJson.isNullOrEmpty()) {
             try {
@@ -220,14 +220,14 @@ data class ServerProfile(
                 loadPercent = obj.optInt("loadPercent", 30),
                 isRecommended = obj.optBoolean("isRecommended", false),
                 dnsServers = dnsList,
-                configText = if (obj.has("configText")) obj.getString("configText") else null,
-                username = if (obj.has("username")) obj.getString("username") else null,
-                password = if (obj.has("password")) obj.getString("password") else null,
-                group = if (obj.has("group")) obj.getString("group") else null,
-                secret = if (obj.has("secret")) obj.getString("secret") else null,
+                configText = if (obj.has("configText") && !obj.isNull("configText")) obj.getString("configText") else null,
+                username = if (obj.has("username") && !obj.isNull("username")) obj.getString("username") else null,
+                password = if (obj.has("password") && !obj.isNull("password")) obj.getString("password") else null,
+                group = if (obj.has("group") && !obj.isNull("group")) obj.getString("group") else null,
+                secret = if (obj.has("secret") && !obj.isNull("secret")) obj.getString("secret") else null,
                 isCustom = obj.optBoolean("isCustom", false),
                 isFromSubscription = obj.optBoolean("isFromSubscription", false),
-                rawConfigJson = if (obj.has("rawConfigJson")) obj.getString("rawConfigJson") else null
+                rawConfigJson = if (obj.has("rawConfigJson") && !obj.isNull("rawConfigJson")) obj.getString("rawConfigJson") else null
             )
         }
 

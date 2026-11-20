@@ -52,6 +52,7 @@ type ConnSession struct {
 
 	closeOnce      sync.Once
 	byeOnce        sync.Once
+	WriteMu        sync.Mutex
 	CloseChan      chan struct{}
 	PayloadIn      chan *proto.Payload
 	PayloadOutTLS  chan *proto.Payload
@@ -196,6 +197,9 @@ func (cSess *ConnSession) SendBye(conn net.Conn) {
 		return
 	}
 	cSess.byeOnce.Do(func() {
+		cSess.WriteMu.Lock()
+		defer cSess.WriteMu.Unlock()
+
 		base.Info("Sending CSTP BYE frame (0x05): Client disconnect")
 		reasonBytes := []byte("Client disconnect")
 		payload := append([]byte{0xb0}, reasonBytes...)

@@ -19,7 +19,12 @@ class RustVpnEngine(
 
     private var isRunning: Boolean = false
 
-    override fun start(tunFd: Int, configJson: String, socketProtector: SocketProtector): Result<Unit> {
+    override fun start(
+        tunFd: Int,
+        configJson: String,
+        socketProtector: SocketProtector,
+        tunConfigCallback: JniBridge.TunConfigCallback?
+    ): Result<Unit> {
         DebugLogger.i(TAG, "Initializing Rust VPN Engine ($LIB_NAME)...")
 
         val initRes = JniBridge.nativeInitEngine(LIB_NAME)
@@ -30,7 +35,7 @@ class RustVpnEngine(
         }
 
         DebugLogger.i(TAG, "Starting Rust tunnel: tunFd=$tunFd, configLength=${configJson.length} bytes...")
-        val startRes = JniBridge.nativeStartTunnel(tunFd, configJson, socketProtector, statusListener)
+        val startRes = JniBridge.nativeStartTunnel(tunFd, configJson, socketProtector, statusListener, tunConfigCallback)
         if (startRes != JniBridge.ENGINE_SUCCESS) {
             val err = "Rust engine failed to start tunnel: ${JniBridge.errorCodeToString(startRes)}"
             DebugLogger.e(TAG, err)

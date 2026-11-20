@@ -33,6 +33,7 @@ data class TunnelConfig(
     val ipv6Prefix: Int = 128,
     val dnsServers: List<String> = listOf("1.1.1.1", "1.0.0.1"),
     val routes: List<CidrRoute> = listOf(CidrRoute.DEFAULT_IPV4),
+    val bypassSubnets: List<CidrRoute> = emptyList(),
     val allowedApplications: Set<String> = emptySet(),
     val disallowedApplications: Set<String> = emptySet(),
     val serverAddress: String = "",
@@ -68,6 +69,15 @@ data class TunnelConfig(
                 routeList.add(CidrRoute.DEFAULT_IPV4)
             }
 
+            val bypassList = mutableListOf<CidrRoute>()
+            val bypassArray = obj.optJSONArray("bypassSubnets")
+            if (bypassArray != null) {
+                for (i in 0 until bypassArray.length()) {
+                    val bObj = bypassArray.getJSONObject(i)
+                    bypassList.add(CidrRoute(bObj.getString("address"), bObj.getInt("prefix")))
+                }
+            }
+
             val allowedSet = mutableSetOf<String>()
             val allowedArray = obj.optJSONArray("allowedApplications")
             if (allowedArray != null) {
@@ -95,6 +105,7 @@ data class TunnelConfig(
                 ipv6Prefix = obj.optInt("ipv6Prefix", 128),
                 dnsServers = dnsList,
                 routes = routeList,
+                bypassSubnets = bypassList,
                 allowedApplications = allowedSet,
                 disallowedApplications = disallowedSet,
                 serverAddress = obj.optString("serverAddress", ""),
@@ -127,6 +138,15 @@ data class TunnelConfig(
             routesArray.put(rObj)
         }
         obj.put("routes", routesArray)
+
+        val bypassArray = JSONArray()
+        bypassSubnets.forEach {
+            val bObj = JSONObject()
+            bObj.put("address", it.address)
+            bObj.put("prefix", it.prefix)
+            bypassArray.put(bObj)
+        }
+        obj.put("bypassSubnets", bypassArray)
 
         val allowedArray = JSONArray()
         allowedApplications.forEach { allowedArray.put(it) }

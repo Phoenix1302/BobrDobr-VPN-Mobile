@@ -5,9 +5,10 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.ArrayDeque
-import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -32,8 +33,10 @@ data class LogEntry(
     val message: String,
     val throwable: Throwable? = null
 ) {
-    fun toFormattedString(dateFormat: SimpleDateFormat): String {
-        val dateStr = dateFormat.format(Date(timestamp))
+    fun toFormattedString(formatter: DateTimeFormatter = DEFAULT_FORMATTER): String {
+        val dateStr = Instant.ofEpochMilli(timestamp)
+            .atZone(ZoneId.systemDefault())
+            .format(formatter)
         val lvlChar = level.name.first()
         val base = "[$dateStr] [$lvlChar] [$tag] $message"
         return if (throwable != null) {
@@ -41,6 +44,10 @@ data class LogEntry(
         } else {
             base
         }
+    }
+
+    companion object {
+        val DEFAULT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     }
 }
 
@@ -171,9 +178,8 @@ object DebugLogger {
      * Formats all buffered logs into a single UTF-8 multi-line string.
      */
     fun getLogsAsText(): String {
-        val df = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
         return synchronized(lock) {
-            buffer.joinToString("\n") { it.toFormattedString(df) }
+            buffer.joinToString("\n") { it.toFormattedString(LogEntry.DEFAULT_FORMATTER) }
         }
     }
 

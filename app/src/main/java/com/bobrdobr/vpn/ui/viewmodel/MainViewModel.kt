@@ -8,7 +8,6 @@ import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bobrdobr.vpn.repository.ServerRepository
-import com.bobrdobr.vpn.routing.CidrUtils
 import com.bobrdobr.vpn.routing.DnsLeakProtector
 import com.bobrdobr.vpn.split.SplitTunnelManager
 import com.bobrdobr.vpn.subscription.SubscriptionManager
@@ -37,7 +36,7 @@ class MainViewModel : ViewModel() {
         const val PREFS_NAME = "bobrdobr_vpn_prefs"
         const val KEY_BYPASS_ENABLED = "key_bypass_enabled"
         const val KEY_BYPASS_SUBNETS = "key_bypass_subnets"
-        const val DEFAULT_BYPASS_SUBNETS = "192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 169.254.0.0/16"
+        const val DEFAULT_BYPASS_SUBNETS = ""
 
         val EMPTY_SERVER = ServerProfile(
             id = "none",
@@ -77,7 +76,7 @@ class MainViewModel : ViewModel() {
 
     private var prefs: SharedPreferences? = null
 
-    private val _bypassEnabled = MutableStateFlow(true)
+    private val _bypassEnabled = MutableStateFlow(false)
     val bypassEnabled: StateFlow<Boolean> = _bypassEnabled.asStateFlow()
     val bypassLocalEnabled: StateFlow<Boolean> get() = bypassEnabled
 
@@ -100,7 +99,7 @@ class MainViewModel : ViewModel() {
         if (!isRepoInitialized) {
             val p = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs = p
-            _bypassEnabled.value = p.getBoolean(KEY_BYPASS_ENABLED, true)
+            _bypassEnabled.value = p.getBoolean(KEY_BYPASS_ENABLED, false)
             _bypassSubnets.value = p.getString(KEY_BYPASS_SUBNETS, DEFAULT_BYPASS_SUBNETS) ?: DEFAULT_BYPASS_SUBNETS
         }
         if (isRepoInitialized) return
@@ -204,38 +203,14 @@ class MainViewModel : ViewModel() {
             Toast.makeText(context, "Выберите шлюз или подключите подписку", Toast.LENGTH_SHORT).show()
             return
         }
-        val splitManager = SplitTunnelManager.getInstance(context)
-        var config = _selectedServer.value.toTunnelConfig()
 
-        // 1. Apply Per-App Split Tunneling (Whitelist / Blacklist)
-        config = splitManager.applyToConfig(config)
-
-        // 2. Apply CIDR routing with Bypass mode (custom excluded subnets) if enabled
-        if (_bypassEnabled.value) {
-            val rawSubnets = _bypassSubnets.value
-            val parsedList = rawSubnets.split(',', ';', '\n', ' ')
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-            val routes = CidrUtils.buildTunnelRoutes(bypassLocal = false, customExcludes = parsedList)
-            config = config.copy(routes = routes)
-        }
-
-        // 3. Strict DNS Routing:
-        // Priority #1: DNS servers specified by configuration (e.g. DNS = 10.8.0.1 in AmneziaWG or ocserv)
-        // for domain-based routing on the VPN server without leaks or overriding.
-        val serverDns = _selectedServer.value.dnsServers
-        val dnsList = if (serverDns.isNotEmpty()) {
-            serverDns
-        } else {
-            when {
-                _selectedDns.value.contains("AdGuard") -> listOf("94.140.14.14", "94.140.15.15")
-                _selectedDns.value.contains("Google") -> listOf("8.8.8.8", "8.8.4.4")
-                _selectedDns.value.contains("Quad9") -> listOf("9.9.9.9", "149.112.112.112")
-                _selectedDns.value.contains("Cloudflare") -> listOf("1.1.1.1", "1.0.0.1")
-                else -> listOf("1.1.1.1", "1.0.0.1")
-            }
-        }
-        config = DnsLeakProtector.applyStrictDns(config, dnsList)
+        val config = com.bobrdobr.vpn.routing.TunnelConfigAssembler.assemble(
+            context = context,
+            profile = _selectedServer.value,
+            bypassEnabled = _bypassEnabled.value,
+            bypassSubnetsRaw = _bypassSubnets.value,
+            fallbackDnsSelection = _selectedDns.value
+        )
 
         VpnTunnelService.start(context, config)
     }

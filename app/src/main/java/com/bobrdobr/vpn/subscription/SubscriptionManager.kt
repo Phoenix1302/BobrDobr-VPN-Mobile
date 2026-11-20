@@ -163,7 +163,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                         handleRevokedToken()
                         _syncError.value = err
                         _isSyncing.value = false
-                        return@withContext Result.failure(IllegalStateException(err))
+                        return@withContext Result.failure(SubscriptionRevokedException(401, err))
                     }
 
                     HttpURLConnection.HTTP_FORBIDDEN -> {
@@ -172,7 +172,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                         handleRevokedToken()
                         _syncError.value = err
                         _isSyncing.value = false
-                        return@withContext Result.failure(IllegalStateException(err))
+                        return@withContext Result.failure(SubscriptionRevokedException(403, err))
                     }
 
                     else -> {
@@ -319,3 +319,5 @@ class SubscriptionManager private constructor(private val context: Context) {
         Log.i(TAG, "Scheduled periodic subscription synchronization (6h interval)")
     }
 }
+
+class SubscriptionRevokedException(val statusCode: Int, message: String) : Exception(message)

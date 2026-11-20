@@ -35,7 +35,6 @@ impl TunnelHandle {
 
     pub fn update_network(&self, net_id: i64) -> Result<(), c_int> {
         log_debug!("update_network: net_id={}", net_id);
-        // SO_MARK requires CAP_NET_ADMIN which is not available to Android user apps (os error 1 EPERM).
         // Outer socket protection and routing are managed by Android VpnService.protect().
         Ok(())
     }
@@ -159,7 +158,7 @@ fn run_packet_loop(
     telemetry: Arc<TelemetryTracker>,
     is_running: Arc<AtomicBool>,
 ) {
-    log_info!("Zero-allocation packet loop started (tun_fd={}, udp_fd={})", tun_dev.fd(), udp_socket.fd());
+    log_info!("Packet loop started (tun_fd={}, udp_fd={})", tun_dev.fd(), udp_socket.fd());
 
     let mut session = SessionState::new(
         config.private_key,
@@ -181,10 +180,10 @@ fn run_packet_loop(
     // Step 2: Send initial Handshake Initiation (with H1 header and S1 padding)
     send_handshake_initiation(&mut session, &udp_socket, &config, &telemetry);
 
-    // Preallocated buffers for zero allocations during packet processing
-    let mut tun_buf = [0u8; 65536];
-    let mut udp_in_buf = [0u8; 65536];
-    let mut udp_out_buf = [0u8; 65536];
+    // Preallocated heap buffers to avoid thread stack overflow and runtime reallocations
+    let mut tun_buf = vec![0u8; 65536];
+    let mut udp_in_buf = vec![0u8; 65536];
+    let mut udp_out_buf = vec![0u8; 65536];
 
     let mut poll_fds = [
         libc::pollfd { fd: shutdown_read_fd, events: libc::POLLIN, revents: 0 },
@@ -248,11 +247,17 @@ fn run_packet_loop(
             loop {
                 match udp_socket.recv(&mut udp_in_buf) {
                     Ok(n) if n >= 4 => {
-                        let header_type = u32::from_le_bytes([
-                            udp_in_buf[0], udp_in_buf[1], udp_in_buf[2], udp_in_buf[3]
-                        ]);
-
-                        let ptype = parse_packet_type(header_type, config.h1, config.h2, config.h3, config.h4);
+                        let ptype = parse_packet_type(
+                            &udp_in_buf[..n],
+                            &config.h1,
+                            &config.h2,
+                            &config.h3,
+                            &config.h4,
+                            config.s1,
+                            config.s2,
+                            config.s3,
+                            config.s4,
+                        );
                         match ptype {
                             PacketType::Response => {
                                 handle_handshake_response(
@@ -279,7 +284,7 @@ fn run_packet_loop(
                                 log_debug!("Ignoring peer initiation in client mode");
                             }
                             PacketType::Unknown(tag) => {
-                                log_debug!("Received unknown packet type tag={}", tag);
+                                log_debug!("Received unknown packet type tag={} (len={})", tag, n);
                             }
                         }
                     }
@@ -305,24 +310,27 @@ fn run_packet_loop(
                         if let Some(ref mut kp) = session.current_keypair {
                             match kp.next_send_counter() {
                                 Ok(counter) => {
+                                    let h4_val = config.h4.pick();
                                     TransportHeader::write_header(
                                         &mut udp_out_buf,
-                                        config.h4,
+                                        h4_val,
                                         kp.remote_index,
                                         counter,
+                                        config.s4,
                                     );
 
-                                    udp_out_buf[16..16 + n].copy_from_slice(&tun_buf[..n]);
+                                    let payload_offset = config.s4 + 16;
+                                    udp_out_buf[payload_offset..payload_offset + n].copy_from_slice(&tun_buf[..n]);
 
                                     match aead_encrypt_in_place(
                                         &kp.send_key,
                                         counter,
-                                        &mut udp_out_buf[16..],
+                                        &mut udp_out_buf[payload_offset..],
                                         n,
                                         &[],
                                     ) {
                                         Ok(encrypted_len) => {
-                                            let total_len = 16 + encrypted_len;
+                                            let total_len = payload_offset + encrypted_len;
                                             if let Ok(sent_bytes) = udp_socket.send(&udp_out_buf[..total_len]) {
                                                 telemetry.record_tx(sent_bytes);
                                                 session.last_tx_time = current_timestamp_ms();
@@ -356,6 +364,7 @@ fn run_packet_loop(
     }
 
     unsafe { libc::close(shutdown_read_fd) };
+    is_running.store(false, Ordering::SeqCst);
     notify_status(status_cb, STATUS_DISCONNECTED, "AmneziaWG tunnel disconnected");
     log_info!("Packet loop terminated cleanly");
 }
@@ -366,14 +375,15 @@ fn send_handshake_initiation(
     config: &AwgConfig,
     telemetry: &TelemetryTracker,
 ) {
-    match session.create_initiation(config.h1) {
+    let h1_val = config.h1.pick();
+    match session.create_initiation(h1_val) {
         Ok(init) => {
-            let init_bytes = init.serialize(config.h1, config.s1);
+            let init_bytes = init.serialize(h1_val, config.s1);
             match socket.send(&init_bytes) {
                 Ok(n) => {
                     telemetry.record_tx(n);
                     session.last_tx_time = current_timestamp_ms();
-                    log_info!("Sent Handshake Initiation: {} bytes (H1={}, S1={})", n, config.h1, config.s1);
+                    log_info!("Sent Handshake Initiation: {} bytes (H1={}, S1={})", n, h1_val, config.s1);
                 }
                 Err(e) => {
                     log_error!("Failed to send Handshake Initiation: {}", e);
@@ -391,13 +401,15 @@ fn send_keepalive(
     socket: &ProtectedUdpSocket,
     config: &AwgConfig,
     telemetry: &TelemetryTracker,
-    buf: &mut [u8; 65536],
+    buf: &mut [u8],
 ) {
     if let Some(ref mut kp) = session.current_keypair {
         if let Ok(counter) = kp.next_send_counter() {
-            TransportHeader::write_header(buf, config.h4, kp.remote_index, counter);
-            if let Ok(encrypted_len) = aead_encrypt_in_place(&kp.send_key, counter, &mut buf[16..], 0, &[]) {
-                let total = 16 + encrypted_len;
+            let h4_val = config.h4.pick();
+            TransportHeader::write_header(buf, h4_val, kp.remote_index, counter, config.s4);
+            let payload_offset = config.s4 + 16;
+            if let Ok(encrypted_len) = aead_encrypt_in_place(&kp.send_key, counter, &mut buf[payload_offset..], 0, &[]) {
+                let total = payload_offset + encrypted_len;
                 if let Ok(n) = socket.send(&buf[..total]) {
                     telemetry.record_tx(n);
                     session.last_tx_time = current_timestamp_ms();
@@ -415,7 +427,7 @@ fn handle_handshake_response(
     telemetry: &TelemetryTracker,
     status_cb: StatusCallbackFn,
 ) {
-    match HandshakeResponse::parse(buf, config.h2) {
+    match HandshakeResponse::parse(buf, &config.h2, config.s2) {
         Ok(resp) => {
             match session.consume_response(&resp) {
                 Ok(rtt_ms) => {
@@ -445,11 +457,12 @@ fn handle_transport_data(
     config: &AwgConfig,
     telemetry: &TelemetryTracker,
 ) {
-    if buf.len() < 32 {
-        return; // Too short for header (16) + Poly1305 tag (16)
+    let min_len = config.s4 + 16 + 16;
+    if buf.len() < min_len {
+        return; // Too short for header + Poly1305 tag
     }
 
-    let header = match TransportHeader::parse(buf, config.h4) {
+    let header = match TransportHeader::parse(buf, &config.h4, config.s4) {
         Ok(h) => h,
         Err(e) => {
             log_debug!("Transport header error: {}", e);
@@ -478,11 +491,13 @@ fn handle_transport_data(
     }
 
     // Decrypt payload in-place
-    let ciphertext_len = n - 16;
+    let payload_offset = config.s4 + 16;
+    let ciphertext_len = n - payload_offset;
+
     match crate::crypto::aead_decrypt_in_place(
         &keypair.recv_key,
         header.counter,
-        &mut buf[16..n],
+        &mut buf[payload_offset..n],
         ciphertext_len,
         &[],
     ) {
@@ -492,8 +507,29 @@ fn handle_transport_data(
                 // Keepalive packet received
                 log_debug!("Received Keepalive from peer");
             } else {
-                // Raw IP packet decrypted! Write directly to Android TUN
-                match tun_dev.write(&buf[16..16 + plaintext_len]) {
+                // Raw IP packet decrypted!
+                // Trim WireGuard 16B padding according to IPv4 / IPv6 header length fields
+                let ip_slice = &buf[payload_offset..payload_offset + plaintext_len];
+                let actual_len = if plaintext_len >= 20 && (ip_slice[0] >> 4) == 4 {
+                    let total_len = u16::from_be_bytes([ip_slice[2], ip_slice[3]]) as usize;
+                    if total_len > 0 && total_len <= plaintext_len {
+                        total_len
+                    } else {
+                        plaintext_len
+                    }
+                } else if plaintext_len >= 40 && (ip_slice[0] >> 4) == 6 {
+                    let payload_len = u16::from_be_bytes([ip_slice[4], ip_slice[5]]) as usize;
+                    let total_len = 40 + payload_len;
+                    if total_len > 0 && total_len <= plaintext_len {
+                        total_len
+                    } else {
+                        plaintext_len
+                    }
+                } else {
+                    plaintext_len
+                };
+
+                match tun_dev.write(&ip_slice[..actual_len]) {
                     Ok(written) => {
                         telemetry.record_rx(written);
                     }

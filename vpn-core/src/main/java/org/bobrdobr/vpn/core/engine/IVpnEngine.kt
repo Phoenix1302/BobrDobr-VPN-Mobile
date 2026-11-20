@@ -8,14 +8,20 @@ import org.bobrdobr.vpn.core.service.SocketProtector
  */
 interface IVpnEngine {
     /**
-     * Starts the native protocol tunnel on the provided TUN descriptor.
+     * Starts the native protocol tunnel on the provided TUN descriptor (or via dynamic 2-phase config).
      *
-     * @param tunFd File descriptor detached from Android ParcelFileDescriptor.
+     * @param tunFd File descriptor detached from Android ParcelFileDescriptor, or -1 for dynamic creation.
      * @param configJson Protocol configuration string (keys, obfuscation headers, endpoints).
      * @param socketProtector Callback to protect transport sockets from routing loops.
+     * @param tunConfigCallback Optional dynamic TUN creation callback (used by Go OpenConnect).
      * @return Result.success if initiated properly, Result.failure on error.
      */
-    fun start(tunFd: Int, configJson: String, socketProtector: SocketProtector): Result<Unit>
+    fun start(
+        tunFd: Int,
+        configJson: String,
+        socketProtector: SocketProtector,
+        tunConfigCallback: JniBridge.TunConfigCallback? = null
+    ): Result<Unit>
 
     /**
      * Gracefully stops the native tunnel, releasing sockets, ending threads, and sending disconnect notices.

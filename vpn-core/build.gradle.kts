@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "org.bobrdobr.vpn.core"
     compileSdk = libs.versions.compileSdk.get().toInt()
+    ndkVersion = "26.2.11394342"
 
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()

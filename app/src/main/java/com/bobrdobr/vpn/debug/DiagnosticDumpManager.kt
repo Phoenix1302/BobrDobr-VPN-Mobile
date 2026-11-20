@@ -33,13 +33,32 @@ object DiagnosticDumpManager {
             emptyList()
         }
 
+        val pkgInfo = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+        } catch (_: Exception) { null }
+
+        val versionName = pkgInfo?.versionName ?: "0.8.4-prerelease"
+        val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            pkgInfo?.longVersionCode ?: 84L
+        } else {
+            @Suppress("DEPRECATION")
+            (pkgInfo?.versionCode?.toLong() ?: 84L)
+        }
+        val targetSdk = context.applicationInfo.targetSdkVersion
+        val minSdk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) context.applicationInfo.minSdkVersion else 26
+
         val sb = StringBuilder()
         sb.appendLine("================================================================================")
         sb.appendLine("           BOBRDOBR VPN MOBILE - DIAGNOSTIC SYSTEM DUMP REPORT                  ")
         sb.appendLine("================================================================================")
         sb.appendLine("Timestamp:              $now")
-        sb.appendLine("Client Version:         BobrDobr VPN Mobile v0.8.2-prerelease (Build 83)")
-        sb.appendLine("Target SDK:             35 (Android 15 Ready) / Min SDK: 26")
+        sb.appendLine("Client Version:         BobrDobr VPN Mobile v$versionName (Build $versionCode)")
+        sb.appendLine("Target SDK:             $targetSdk (Android Ready) / Min SDK: $minSdk")
         sb.appendLine("UI Framework:           Jetpack Compose BOM 2024.12.01 / Material 3")
         sb.appendLine("Kotlin Runtime:         2.1.0")
         sb.appendLine("NDK Toolchain:          Android NDK r27c (LLVM Clang 18) / C++20")
@@ -103,7 +122,7 @@ object DiagnosticDumpManager {
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, "BobrDobr VPN Diagnostic Dump ($timestamp)")
-                putExtra(Intent.EXTRA_TEXT, "Диагностический дамп BobrDobr VPN Mobile v0.8.2-prerelease\nФайл прикреплен.")
+                putExtra(Intent.EXTRA_TEXT, "Диагностический дамп BobrDobr VPN Mobile v0.8.4-prerelease\nФайл прикреплен.")
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }

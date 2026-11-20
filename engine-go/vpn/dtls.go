@@ -107,7 +107,13 @@ func DtlsChannel(cSess *session.ConnSession, protectFn utils.ProtectSocketFn) {
 	}
 
 	ctxListen, cancelListen := context.WithTimeout(context.Background(), 10*time.Second)
-	packetConn, err := lc.ListenPacket(ctxListen, "udp4", "0.0.0.0:0")
+	network := "udp4"
+	bindAddr := "0.0.0.0:0"
+	if addr.IP != nil && addr.IP.To4() == nil {
+		network = "udp6"
+		bindAddr = "[::]:0"
+	}
+	packetConn, err := lc.ListenPacket(ctxListen, network, bindAddr)
 	cancelListen()
 	if err != nil {
 		base.Error("Failed to bind protected DTLS socket:", err)

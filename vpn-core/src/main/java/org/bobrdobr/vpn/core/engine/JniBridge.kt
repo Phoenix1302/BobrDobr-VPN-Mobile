@@ -73,6 +73,17 @@ object JniBridge {
     }
 
     /**
+     * Interface for dynamic 2-phase TUN creation callback (e.g. OpenConnect CSTP negotiated config).
+     */
+    fun interface TunConfigCallback {
+        /**
+         * Invoked by native engine with negotiated parameters JSON (IP, netmask, DNS, MTU, routes).
+         * @return Captured integer TUN file descriptor, or -1 on error.
+         */
+        fun onTunConfigReady(configJson: String): Int
+    }
+
+    /**
      * Dynamically opens and binds symbols from the specified native library.
      *
      * @param libName Name of the library, e.g. "libengine_rust.so" or "libengine_go.so".
@@ -82,13 +93,20 @@ object JniBridge {
 
     /**
      * Starts the native protocol tunnel.
+     *
+     * @param tunFd File descriptor detached from Android ParcelFileDescriptor, or -1 for 2-phase negotiation.
+     * @param configJson Protocol configuration string in JSON format.
+     * @param protector Socket protection callback to prevent routing loops.
+     * @param statusListener Status reporting callback.
+     * @param tunConfigCallback Dynamic 2-phase TUN creation callback (optional).
      */
     @JvmStatic
     external fun nativeStartTunnel(
         tunFd: Int,
         configJson: String,
         protector: SocketProtector,
-        statusListener: StatusListener?
+        statusListener: StatusListener?,
+        tunConfigCallback: TunConfigCallback? = null
     ): Int
 
     /**

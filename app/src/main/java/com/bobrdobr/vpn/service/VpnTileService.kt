@@ -1,5 +1,6 @@
 package com.bobrdobr.vpn.service
 
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
@@ -80,7 +81,19 @@ class VpnTileService : TileService() {
                     val repo = com.bobrdobr.vpn.repository.ServerRepository.getInstance(this)
                     val targetServer = repo.allServers.value.firstOrNull()
                     if (targetServer != null) {
-                        VpnTunnelService.start(this, targetServer.toTunnelConfig())
+                        val prefs = getSharedPreferences("bobrdobr_vpn_prefs", Context.MODE_PRIVATE)
+                        val bypassEnabled = prefs.getBoolean("key_bypass_enabled", false)
+                        val bypassSubnets = prefs.getString("key_bypass_subnets", "") ?: ""
+                        val selectedDns = prefs.getString("key_selected_dns", "Cloudflare") ?: "Cloudflare"
+
+                        val config = com.bobrdobr.vpn.routing.TunnelConfigAssembler.assemble(
+                            context = this,
+                            profile = targetServer,
+                            bypassEnabled = bypassEnabled,
+                            bypassSubnetsRaw = bypassSubnets,
+                            fallbackDnsSelection = selectedDns
+                        )
+                        VpnTunnelService.start(this, config)
                     } else {
                         val appIntent = Intent(this, MainActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP

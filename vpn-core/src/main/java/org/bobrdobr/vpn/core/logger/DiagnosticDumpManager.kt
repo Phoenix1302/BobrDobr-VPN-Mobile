@@ -28,8 +28,35 @@ import java.util.TimeZone
 object DiagnosticDumpManager {
 
     private const val TAG = "DiagnosticDumpManager"
-    const val APP_VERSION_NAME = "0.8.2-prerelease"
-    const val APP_VERSION_CODE = 80
+
+    fun getAppVersionName(context: Context): String {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(0)).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            } ?: "0.8.4-prerelease"
+        } catch (_: Exception) {
+            "0.8.4-prerelease"
+        }
+    }
+
+    fun getAppVersionCode(context: Context): Long {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(0)).longVersionCode
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionCode.toLong()
+            }
+        } catch (_: Exception) {
+            84L
+        }
+    }
 
     /**
      * Generates a complete UTF-8 diagnostic dump string, saves it to the app's cache directory,
@@ -62,13 +89,16 @@ object DiagnosticDumpManager {
                 file
             )
 
+            val vName = getAppVersionName(context)
+            val vCode = getAppVersionCode(context)
+
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain; charset=utf-8"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "БобрДобр VPN $APP_VERSION_NAME: Диагностический дамп")
+                putExtra(Intent.EXTRA_SUBJECT, "БобрДобр VPN $vName: Диагностический дамп")
                 putExtra(
                     Intent.EXTRA_TEXT,
-                    "Диагностический дамп БобрДобр VPN Mobile ($APP_VERSION_NAME, сборка $APP_VERSION_CODE).\nФайл: ${file.name}"
+                    "Диагностический дамп БобрДобр VPN Mobile ($vName, сборка $vCode).\nФайл: ${file.name}"
                 )
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -96,13 +126,16 @@ object DiagnosticDumpManager {
         }
         val now = Date()
 
+        val vName = getAppVersionName(context)
+        val vCode = getAppVersionCode(context)
+
         sb.append("================================================================================\n")
         sb.append("               БОБРДОБР VPN (BOBRDOBR VPN) MOBILE DIAGNOSTIC DUMP               \n")
         sb.append("================================================================================\n\n")
 
         // 1. Header & Version
         sb.append("--- [1. REPORT METADATA] ---\n")
-        sb.append("App Version      : BobrDobr VPN Mobile $APP_VERSION_NAME (build $APP_VERSION_CODE)\n")
+        sb.append("App Version      : BobrDobr VPN Mobile $vName (build $vCode)\n")
         sb.append("Package Name     : ${context.packageName}\n")
         sb.append("Local Timestamp  : ${localDf.format(now)}\n")
         sb.append("UTC Timestamp    : ${utcDf.format(now)}\n")

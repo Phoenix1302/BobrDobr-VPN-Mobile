@@ -138,10 +138,12 @@ func PayloadOutTLSToServer(conn net.Conn, cSess *session.ConnSession) {
 		hdr[6] = pl.Type
 		hdr[7] = 0x00
 
+		cSess.WriteMu.Lock()
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		// Write 8-byte header
 		_, err := conn.Write(hdr)
 		if err != nil {
+			cSess.WriteMu.Unlock()
 			PutPayloadBuffer(pl)
 			base.Error("TLS write header error:", err)
 			return
@@ -151,11 +153,13 @@ func PayloadOutTLSToServer(conn net.Conn, cSess *session.ConnSession) {
 		if l > 0 {
 			_, err = conn.Write(pl.Data)
 			if err != nil {
+				cSess.WriteMu.Unlock()
 				PutPayloadBuffer(pl)
 				base.Error("TLS write payload error:", err)
 				return
 			}
 		}
+		cSess.WriteMu.Unlock()
 
 		PutPayloadBuffer(pl)
 	}

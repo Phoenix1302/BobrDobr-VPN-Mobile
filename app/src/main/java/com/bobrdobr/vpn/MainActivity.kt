@@ -36,16 +36,6 @@ class MainActivity : ComponentActivity() {
         VpnTunnelService.setUiVisibility(this, true)
     }
 
-    override fun onResume() {
-        super.onResume()
-        VpnTunnelService.setUiVisibility(this, true)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        VpnTunnelService.setUiVisibility(this, false)
-    }
-
     override fun onStop() {
         super.onStop()
         VpnTunnelService.setUiVisibility(this, false)

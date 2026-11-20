@@ -4,9 +4,8 @@ import android.os.Build
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 enum class LogLevel(val tag: String) {
     INFO("[INFO]"),
@@ -26,11 +25,11 @@ data class LogEntry(
 }
 
 /**
- * DebugLogger: Real-time cyberpunk diagnostic log repository for developers and users.
+ * DebugLogger: Real-time diagnostic log repository for developers and users.
  * Supports thread-safe logging, level filtering, and real-time reactive streaming.
  */
 object DebugLogger {
-    private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     private const val MAX_LOGS = 1200
     private var sequenceId = 0L
 
@@ -57,7 +56,7 @@ object DebugLogger {
         if (!_isDebugModeEnabled.value && level == LogLevel.DEBUG) return
         val entry = LogEntry(
             id = ++sequenceId,
-            timestamp = timeFormat.format(Date()),
+            timestamp = LocalTime.now().format(timeFormatter),
             level = level,
             tag = tag,
             message = message
@@ -89,7 +88,7 @@ object DebugLogger {
     }
 
     private fun logInitialSystemInfo() {
-        info("System", "Инициализация подсистемы отладки BobrDobr VPN Mobile v0.8.2-prerelease")
+        info("System", "Инициализация подсистемы отладки BobrDobr VPN Mobile v0.8.4-prerelease")
         info("Platform", "Android SDK ${Build.VERSION.SDK_INT} (${Build.VERSION.RELEASE}), Устройство: ${Build.MANUFACTURER} ${Build.MODEL}")
         info("ABIs", "Поддерживаемые ABI: ${Build.SUPPORTED_ABIS.joinToString(", ")}")
         info("Alignment", "Выравнивание ELF LOAD 16 KB (0x4000): УСПЕШНО")

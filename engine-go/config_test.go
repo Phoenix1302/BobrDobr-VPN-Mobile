@@ -139,3 +139,40 @@ func TestSNIExtraction(t *testing.T) {
 		t.Errorf("Case 5 failed: expected empty SNI for IP literal, got '%s'", sni5)
 	}
 }
+
+func TestMaskToPrefixAndCIDR(t *testing.T) {
+	maskTests := []struct {
+		input    string
+		expected int
+	}{
+		{"255.255.255.0", 24},
+		{"255.0.0.0", 8},
+		{"255.255.255.255", 32},
+		{"255.255.0.0", 16},
+		{"18", 18},
+		{"", 32},
+	}
+	for _, tc := range maskTests {
+		p := maskToPrefix(tc.input)
+		if p != tc.expected {
+			t.Errorf("maskToPrefix('%s'): expected %d, got %d", tc.input, tc.expected, p)
+		}
+	}
+
+	cidrTests := []struct {
+		input    string
+		expected string
+	}{
+		{"10.0.0.0/255.0.0.0", "10.0.0.0/8"},
+		{"192.168.1.0/255.255.255.0", "192.168.1.0/24"},
+		{"172.16.0.0/16", "172.16.0.0/16"},
+		{"8.8.8.8", "8.8.8.8/32"},
+		{"", ""},
+	}
+	for _, tc := range cidrTests {
+		res := normalizeCIDR(tc.input)
+		if res != tc.expected {
+			t.Errorf("normalizeCIDR('%s'): expected '%s', got '%s'", tc.input, tc.expected, res)
+		}
+	}
+}

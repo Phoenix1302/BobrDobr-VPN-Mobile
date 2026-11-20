@@ -187,7 +187,7 @@ fun DiagnosticsScreen(
 
         DiagnosticsCard {
             Column(modifier = Modifier.padding(16.dp)) {
-                ComponentSpecRow("Клиент", "BobrDobr VPN Mobile v0.8.2-prerelease (Сборка 83)", NeonCyan)
+                ComponentSpecRow("Клиент", "BobrDobr VPN Mobile v0.8.4-prerelease (Сборка 84)", NeonCyan)
                 SpecDivider()
                 ComponentSpecRow("Базовая платформа", "Android Target SDK 35 (Android 15 Ready) / Min SDK 26", TextPrimary)
                 SpecDivider()

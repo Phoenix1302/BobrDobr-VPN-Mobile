@@ -34,8 +34,14 @@ class SubscriptionSyncWorker(
             Result.success()
         } else {
             val err = result.exceptionOrNull()
-            Log.w(TAG, "Background subscription synchronization failed: ${err?.message}")
-            Result.retry()
+            val msg = err?.message ?: ""
+            if (err is SubscriptionRevokedException || msg.contains("401") || msg.contains("403") || msg.contains("отозван") || msg.contains("заблокирован")) {
+                Log.e(TAG, "Subscription token revoked or access forbidden ($msg). Returning Result.failure() without retry.")
+                Result.failure()
+            } else {
+                Log.w(TAG, "Background subscription synchronization failed: $msg. Retrying later.")
+                Result.retry()
+            }
         }
     }
 }

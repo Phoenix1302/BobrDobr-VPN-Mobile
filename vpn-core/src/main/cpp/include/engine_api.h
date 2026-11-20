@@ -50,6 +50,7 @@ typedef struct {
     uint64_t rx_speed_bps;
     uint64_t tx_speed_bps;
     uint32_t ping_ms;
+    uint32_t reserved;
     uint64_t last_handshake_timestamp;
     uint64_t timestamp;
 } tunnel_stats_t;
@@ -84,6 +85,17 @@ typedef void (*status_callback_fn)(int status_code, const char* message);
 typedef void (*stats_callback_fn)(uint64_t rx_bytes, uint64_t tx_bytes);
 
 /**
+ * Dynamic TUN configuration callback function pointer.
+ * Invoked by native engines (such as OpenConnect after CSTP negotiation)
+ * to request creation and configuration of the Android TUN interface
+ * based on dynamically assigned IP, netmask, DNS, MTU, and split-routing rules.
+ *
+ * @param tun_config_json JSON-formatted string with negotiated tunnel parameters.
+ * @return Detached raw file descriptor of the created TUN device, or -1 on failure.
+ */
+typedef int (*tun_config_callback_fn)(const char* tun_config_json);
+
+/**
  * Starts the VPN tunnel using the provided TUN file descriptor and JSON configuration.
  *
  * @param tun_fd File descriptor of the TUN interface detached from Android ParcelFileDescriptor.
@@ -93,6 +105,21 @@ typedef void (*stats_callback_fn)(uint64_t rx_bytes, uint64_t tx_bytes);
  * @return ENGINE_SUCCESS (0) on success, or a negative ENGINE_ERR_* code.
  */
 int start_tunnel(int tun_fd, const char* config_json, protect_callback_fn cb, status_callback_fn scb);
+
+/**
+ * Starts the VPN tunnel with dynamic 2-phase TUN configuration support (v2).
+ * If tun_fd >= 0, the engine uses the pre-created descriptor.
+ * If tun_fd < 0 and tcb != NULL, the engine dynamically negotiates parameters first
+ * and calls tcb(tun_config_json) to obtain the TUN descriptor from Android VpnService.
+ *
+ * @param tun_fd Pre-created TUN file descriptor, or -1 for dynamic negotiation.
+ * @param config_json Protocol configuration in JSON format.
+ * @param cb Synchronous socket protection callback.
+ * @param scb Asynchronous status and error reporting callback.
+ * @param tcb Dynamic TUN creation callback.
+ * @return ENGINE_SUCCESS (0) on success, or a negative ENGINE_ERR_* code.
+ */
+int start_tunnel_v2(int tun_fd, const char* config_json, protect_callback_fn cb, status_callback_fn scb, tun_config_callback_fn tcb);
 
 /**
  * Gracefully shuts down the VPN tunnel.

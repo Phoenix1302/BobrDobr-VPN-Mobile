@@ -174,6 +174,9 @@ impl SessionState {
         h_2_input.extend_from_slice(&e_pub);
         let h_2 = blake2s_256(&h_2_input);
 
+        // WireGuard Noise_IKpsk2: mix ephemeral public key into chaining key
+        let c_0 = kdf1(&c_0, &e_pub);
+
         // 5. ss1 = X25519(e_priv, Spk)
         let ss1 = x25519(&e_priv, &self.remote_pub);
 
@@ -265,6 +268,9 @@ impl SessionState {
         h_5_input.extend_from_slice(&resp.unencrypted_ephemeral);
         let h_5 = blake2s_256(&h_5_input);
 
+        // WireGuard Noise_IKpsk2: mix peer ephemeral public key into chaining key
+        let c_2 = kdf1(&self.chaining_key, &resp.unencrypted_ephemeral);
+
         // 2. ss3 = X25519(e_priv, e_peer_pub)
         let ss3 = x25519(&e_priv, &resp.unencrypted_ephemeral);
 
@@ -272,7 +278,7 @@ impl SessionState {
         let ss4 = x25519(&self.local_priv, &resp.unencrypted_ephemeral);
 
         // 4. (C_3, _) = KDF1(C_2, ss3)
-        let c_3 = kdf1(&self.chaining_key, &ss3);
+        let c_3 = kdf1(&c_2, &ss3);
 
         // 5. (C_4, _) = KDF1(C_3, ss4)
         let c_4 = kdf1(&c_3, &ss4);
@@ -336,4 +342,145 @@ impl SessionState {
         }
         false
     }
+}
+
+#[cfg(test)]
+pub fn simulate_server_response(
+    server_priv: &[u8; 32],
+    client_pub: &[u8; 32],
+    preshared_key: Option<[u8; 32]>,
+    h2_val: u32,
+    init: &HandshakeInitiation,
+    server_local_index: u32,
+) -> Result<(HandshakeResponse, [u8; 32], [u8; 32]), String> {
+    let server_pub = public_from_private(server_priv);
+
+    // 1. C_0 = Hash(CONSTRUCTION)
+    let c_0 = blake2s_256(CONSTRUCTION);
+
+    // 2. H_0 = Hash(C_0 || IDENTIFIER)
+    let mut h_0_input = Vec::with_capacity(32 + IDENTIFIER.len());
+    h_0_input.extend_from_slice(&c_0);
+    h_0_input.extend_from_slice(IDENTIFIER);
+    let h_0 = blake2s_256(&h_0_input);
+
+    // 3. H_1 = Hash(H_0 || Spk)
+    let mut h_1_input = Vec::with_capacity(64);
+    h_1_input.extend_from_slice(&h_0);
+    h_1_input.extend_from_slice(&server_pub);
+    let h_1 = blake2s_256(&h_1_input);
+
+    // 4. H_2 = Hash(H_1 || e_pub)
+    let mut h_2_input = Vec::with_capacity(64);
+    h_2_input.extend_from_slice(&h_1);
+    h_2_input.extend_from_slice(&init.unencrypted_ephemeral);
+    let h_2 = blake2s_256(&h_2_input);
+
+    // WireGuard Noise_IKpsk2: mix ephemeral public key into chaining key
+    let c_0 = kdf1(&c_0, &init.unencrypted_ephemeral);
+
+    // 5. ss1 = X25519(Spk_priv, e_pub)
+    let ss1 = x25519(server_priv, &init.unencrypted_ephemeral);
+
+    // 6. (C_1, k_1) = KDF2(C_0, ss1)
+    let (c_1, k_1) = kdf2(&c_0, &ss1);
+
+    // 7. decrypted_client_pub = AEAD_Decrypt(k_1, 0, encrypted_static, H_2)
+    let decrypted_client_pub = aead_decrypt(&k_1, 0, &init.encrypted_static, &h_2)?;
+    if decrypted_client_pub != *client_pub {
+        return Err("Client public key mismatch during server decryption".to_string());
+    }
+
+    // 8. H_3 = Hash(H_2 || encrypted_static)
+    let mut h_3_input = Vec::with_capacity(32 + 48);
+    h_3_input.extend_from_slice(&h_2);
+    h_3_input.extend_from_slice(&init.encrypted_static);
+    let h_3 = blake2s_256(&h_3_input);
+
+    // 9. ss2 = X25519(Spk_priv, Cpk)
+    let ss2 = x25519(server_priv, client_pub);
+
+    // 10. (C_2, k_2) = KDF2(C_1, ss2)
+    let (c_2, k_2) = kdf2(&c_1, &ss2);
+
+    // 11. Decrypt timestamp
+    let _tai = aead_decrypt(&k_2, 0, &init.encrypted_timestamp, &h_3)?;
+
+    // 12. H_4 = Hash(H_3 || encrypted_timestamp)
+    let mut h_4_input = Vec::with_capacity(32 + 28);
+    h_4_input.extend_from_slice(&h_3);
+    h_4_input.extend_from_slice(&init.encrypted_timestamp);
+    let h_4 = blake2s_256(&h_4_input);
+
+    // Server generates ephemeral keypair
+    let (e_resp_priv, e_resp_pub) = generate_ephemeral_keypair();
+
+    // 13. H_5 = Hash(H_4 || e_resp_pub)
+    let mut h_5_input = Vec::with_capacity(64);
+    h_5_input.extend_from_slice(&h_4);
+    h_5_input.extend_from_slice(&e_resp_pub);
+    let h_5 = blake2s_256(&h_5_input);
+
+    // WireGuard Noise_IKpsk2: mix responder ephemeral into chaining key
+    let c_2 = kdf1(&c_2, &e_resp_pub);
+
+    // 14. ss3 = X25519(e_resp_priv, e_init_pub)
+    let ss3 = x25519(&e_resp_priv, &init.unencrypted_ephemeral);
+
+    // 15. ss4 = X25519(e_resp_priv, Cpk)
+    let ss4 = x25519(&e_resp_priv, client_pub);
+
+    // 16. (C_3, _) = KDF1(C_2, ss3)
+    let c_3 = kdf1(&c_2, &ss3);
+
+    // 17. (C_4, _) = KDF1(C_3, ss4)
+    let c_4 = kdf1(&c_3, &ss4);
+
+    // 18. (C_5, tau, k_3) = KDF3(C_4, psk)
+    let psk = preshared_key.unwrap_or([0u8; 32]);
+    let (c_5, tau, k_3) = kdf3(&c_4, &psk);
+
+    // 19. H_6 = Hash(H_5 || tau)
+    let mut h_6_input = Vec::with_capacity(64);
+    h_6_input.extend_from_slice(&h_5);
+    h_6_input.extend_from_slice(&tau);
+    let h_6 = blake2s_256(&h_6_input);
+
+    // 20. Encrypt empty payload
+    let encrypted_empty_vec = aead_encrypt(&k_3, 0, &[], &h_6)?;
+    let mut encrypted_empty = [0u8; 16];
+    encrypted_empty.copy_from_slice(&encrypted_empty_vec);
+
+    // 21. Derive Transport Keys:
+    // WireGuard spec section 5.4:
+    // Initiator: (T_send, T_recv) := KDF2(c, ε)
+    // Responder: (T_recv, T_send) := KDF2(c, ε)
+    let (server_recv_key, server_send_key) = kdf2(&c_5, &[]);
+
+    // 22. MAC1 calculation for Response
+    let mut mac1_key_input = Vec::with_capacity(8 + 32);
+    mac1_key_input.extend_from_slice(LABEL_MAC1);
+    mac1_key_input.extend_from_slice(client_pub);
+    let mac1_key = blake2s_256(&mac1_key_input);
+
+    let mut pre_mac = Vec::with_capacity(60);
+    pre_mac.extend_from_slice(&h2_val.to_le_bytes());
+    pre_mac.extend_from_slice(&server_local_index.to_le_bytes());
+    pre_mac.extend_from_slice(&init.sender_index.to_le_bytes());
+    pre_mac.extend_from_slice(&e_resp_pub);
+    pre_mac.extend_from_slice(&encrypted_empty);
+
+    let mac1 = blake2s_mac128(&mac1_key, &pre_mac)?;
+    let mac2 = [0u8; 16];
+
+    let resp = HandshakeResponse {
+        sender_index: server_local_index,
+        receiver_index: init.sender_index,
+        unencrypted_ephemeral: e_resp_pub,
+        encrypted_empty,
+        mac1,
+        mac2,
+    };
+
+    Ok((resp, server_send_key, server_recv_key))
 }
