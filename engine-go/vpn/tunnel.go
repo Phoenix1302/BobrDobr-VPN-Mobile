@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	tls "github.com/refraction-networking/utls"
@@ -52,6 +53,13 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 	initTunnelParams()
 
 	connectUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel"
+	if auth.Prof.SecretKey != "" {
+		if strings.Contains(connectUrl, "?") {
+			connectUrl += "&" + auth.Prof.SecretKey
+		} else {
+			connectUrl += "?" + auth.Prof.SecretKey
+		}
+	}
 	req, err := http.NewRequest("CONNECT", connectUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CONNECT request: %w", err)

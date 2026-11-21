@@ -468,6 +468,23 @@ object SubscriptionParser {
             config += peerBlock
         }
 
+        // Explicit values from the subscription object are authoritative over stale
+        // values embedded in config_text. This keeps the generated profile aligned
+        // with the server response schema.
+        val explicitObfuscation: List<Pair<String, Long>> = listOf(
+            "Jc" to jc.toLong(), "Jmin" to jmin.toLong(), "Jmax" to jmax.toLong(),
+            "S1" to s1.toLong(), "S2" to s2.toLong(), "H1" to h1, "H2" to h2,
+            "H3" to h3, "H4" to h4
+        ).filter { it.second >= 0L }
+        for ((key, value) in explicitObfuscation) {
+            val line = Regex("(?im)^\\s*${key}\\s*=.*$")
+            config = if (line.containsMatchIn(config)) {
+                line.replace(config, "$key = $value")
+            } else {
+                config.replaceFirst(Regex("(?i)(\\[Interface\\]\\r?\\n)"), "$1$key = $value\\n")
+            }
+        }
+
         return config
     }
 
