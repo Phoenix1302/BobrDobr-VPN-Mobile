@@ -53,8 +53,8 @@ class AppUpdateManager private constructor(private val appContext: Context) {
 
     companion object {
         private const val TAG = "AppUpdateManager"
-        const val CURRENT_VERSION_NAME = "0.8.4-prerelease"
-        const val CURRENT_VERSION_CODE = 84
+        const val CURRENT_VERSION_NAME = "0.8.5-prerelease"
+        const val CURRENT_VERSION_CODE = 85
         const val GITHUB_REPO_URL = "https://github.com/Phoenix1302/BobrDobr-VPN-Mobile"
         const val AUTHOR_PROFILE_URL = "https://github.com/Phoenix1302"
 
