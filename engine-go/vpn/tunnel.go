@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	tls "github.com/refraction-networking/utls"
@@ -24,6 +23,8 @@ var (
 )
 
 func init() {
+	cstpReqHeaders["X-CSTP-Version"] = "1"
+	cstpReqHeaders["X-CSTP-Protocol"] = "Copyright (c) 2004 Cisco Systems, Inc."
 	cstpReqHeaders["X-CSTP-VPNAddress-Type"] = "IPv4"
 	cstpReqHeaders["X-CSTP-MTU"] = "1360"
 	cstpReqHeaders["X-CSTP-Base-MTU"] = "1360"
@@ -34,6 +35,9 @@ func initTunnelParams() {
 	if sessionToken == "" && auth.WebVpnCookie != "" {
 		sessionToken = auth.WebVpnCookie
 		session.Sess.SessionToken = sessionToken
+	}
+	if sessionToken == "" {
+		base.Error("Warning: sessionToken is empty during CSTP tunnel initialization!")
 	}
 	cstpReqHeaders["Cookie"] = "webvpn=" + sessionToken
 	if auth.Prof.LocalIP != "" {
@@ -53,13 +57,6 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 	initTunnelParams()
 
 	connectUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel"
-	if auth.Prof.SecretKey != "" {
-		if strings.Contains(connectUrl, "?") {
-			connectUrl += "&" + auth.Prof.SecretKey
-		} else {
-			connectUrl += "?" + auth.Prof.SecretKey
-		}
-	}
 	req, err := http.NewRequest("CONNECT", connectUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CONNECT request: %w", err)
@@ -109,6 +106,51 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 	}
 
 	resp, err := http.ReadResponse(auth.BufR, req)
+	if err != nil {
+		if auth.Conn != nil {
+			_ = auth.Conn.Close()
+			auth.Conn = nil
+		}
+		return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
+	}
+
+	// Fallback retry with camouflage secret if standard path is rejected with 404/405
+	if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) && auth.Prof.SecretKey != "" {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		if auth.Conn != nil {
+			_ = auth.Conn.Close()
+			auth.Conn = nil
+		}
+		base.Info("Standard CSTP path returned", resp.StatusCode, "- attempting retry with camouflage secret")
+		fallbackUrl := connectUrl + "?" + auth.Prof.SecretKey
+		req2, err2 := http.NewRequest("CONNECT", fallbackUrl, nil)
+		if err2 == nil {
+			req2.Host = req.Host
+			utils.SetCommonHeader(req2)
+			for k, v := range cstpReqHeaders {
+				req2.Header[k] = []string{v}
+			}
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel2()
+			serverName := auth.Prof.SNI
+			if serverName == "" {
+				serverName = auth.Prof.Host
+			}
+			auth.Conn, err = utils.DialBrowserTLS(ctx2, auth.Prof.HostWithPort, serverName, base.Cfg.InsecureSkipVerify, protectFn)
+			if err == nil {
+				auth.BufR = bufio.NewReader(auth.Conn)
+				if err = req2.Write(auth.Conn); err == nil {
+					resp2, err2 := http.ReadResponse(auth.BufR, req2)
+					if err2 == nil {
+						resp = resp2
+						req = req2
+					}
+				}
+			}
+		}
+	}
 	if err != nil {
 		if auth.Conn != nil {
 			_ = auth.Conn.Close()

@@ -276,14 +276,11 @@ func tplPost(typ int, path string, dtd *proto.DTD) error {
 
 	if resp.StatusCode == http.StatusOK {
 		err = xml.Unmarshal(body, dtd)
-		if dtd.Type == "complete" && dtd.SessionToken == "" {
-			// Compatibility with ocserv
-			cookies := resp.Cookies()
-			for _, c := range cookies {
-				if c.Name == "webvpn" {
-					WebVpnCookie = c.Value
-					break
-				}
+		// Extract webvpn cookie whenever present from server response
+		for _, c := range resp.Cookies() {
+			if c.Name == "webvpn" && c.Value != "" {
+				WebVpnCookie = c.Value
+				break
 			}
 		}
 		return err
