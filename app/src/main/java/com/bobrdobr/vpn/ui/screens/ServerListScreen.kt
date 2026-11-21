@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,12 +37,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -67,7 +71,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -76,6 +82,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bobrdobr.vpn.config.ConfigValidator
 import com.bobrdobr.vpn.config.QrConfigDecoder
 import com.bobrdobr.vpn.config.ValidationResult
+import com.bobrdobr.vpn.ui.components.DesktopTag
 import com.bobrdobr.vpn.ui.components.ProtocolBadge
 import com.bobrdobr.vpn.ui.model.ServerProfile
 import com.bobrdobr.vpn.ui.theme.BackgroundCard
@@ -86,6 +93,7 @@ import com.bobrdobr.vpn.ui.theme.CardBorder
 import com.bobrdobr.vpn.ui.theme.NeonAmber
 import com.bobrdobr.vpn.ui.theme.NeonCyan
 import com.bobrdobr.vpn.ui.theme.NeonEmerald
+import com.bobrdobr.vpn.ui.theme.NeonPurple
 import com.bobrdobr.vpn.ui.theme.NeonRed
 import com.bobrdobr.vpn.ui.theme.TextMuted
 import com.bobrdobr.vpn.ui.theme.TextPrimary
@@ -129,6 +137,7 @@ fun ServerListScreen(
     val filterTabs = listOf("Все", "AmneziaWG", "OpenConnect")
 
     var showAddServerDialog by remember { mutableStateOf(false) }
+    var inspectingServer by remember { mutableStateOf<ServerProfile?>(null) }
 
     val filteredServers = servers.filter { server ->
         val matchesQuery = server.name.contains(searchQuery, ignoreCase = true) ||
@@ -311,6 +320,9 @@ fun ServerListScreen(
                         onSelectClick = {
                             viewModel.selectServer(server)
                             onBack()
+                        },
+                        onInspectClick = {
+                            inspectingServer = server
                         }
                     )
                 }
@@ -330,6 +342,20 @@ fun ServerListScreen(
                 showAddServerDialog = false
                 Toast.makeText(context, "Шлюз «${newServer.name}» успешно добавлен!", Toast.LENGTH_SHORT).show()
             }
+        )
+    }
+
+    inspectingServer?.let { server ->
+        ServerDetailsDialog(
+            server = server,
+            onDismiss = { inspectingServer = null },
+            onDeleteCustom = if (server.isCustom) {
+                {
+                    viewModel.removeServer(context, server.id)
+                    inspectingServer = null
+                    Toast.makeText(context, "Шлюз «${server.name}» удален", Toast.LENGTH_SHORT).show()
+                }
+            } else null
         )
     }
 }
@@ -423,7 +449,8 @@ private fun DesktopServerCard(
     isActiveConnected: Boolean,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
-    onSelectClick: () -> Unit
+    onSelectClick: () -> Unit,
+    onInspectClick: () -> Unit
 ) {
     val protocolBaseColor = when (server.protocol) {
         VpnProtocol.AMNEZIA_WG -> NeonAmber
@@ -508,7 +535,7 @@ private fun DesktopServerCard(
                             maxLines = 1
                         )
                         Text(
-                            text = "${server.location} • ${server.serverAddress}:${server.serverPort}",
+                            text = "${server.serverAddress}:${server.serverPort}",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = TextSecondary,
                                 fontFamily = FontFamily.Monospace,
@@ -547,7 +574,7 @@ private fun DesktopServerCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Row 2: Badges (Protocol, [ sub ], [ split ])
+            // Row 2: Badges (Protocol, [ sub ])
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -555,21 +582,15 @@ private fun DesktopServerCard(
                 ProtocolBadge(protocol = server.protocol)
 
                 if (server.isFromSubscription) {
-                    DesktopTag(label = "sub", color = NeonCyan)
+                    DesktopTag(label = "sub", color = NeonPurple)
                 } else if (server.isCustom) {
                     DesktopTag(label = "custom", color = NeonAmber)
-                }
-
-                DesktopTag(label = "split", color = TextSecondary)
-
-                if (server.dnsServers.isNotEmpty()) {
-                    DesktopTag(label = "DNS", color = NeonCyan)
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Row 3: Status Indicator + Direct Action Button [ Подключить ] / [ Отключить ]
+            // Row 3: Status Indicator + Direct Actions [ Settings ] & [ Подключить ] / [ Отключить ]
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -608,42 +629,63 @@ private fun DesktopServerCard(
                     )
                 }
 
-                // Right: Action button
-                if (isActiveConnected) {
-                    Button(
-                        onClick = onDisconnectClick,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NeonRed.copy(alpha = 0.15f),
-                            contentColor = NeonRed
-                        ),
-                        border = BorderStroke(1.dp, NeonRed),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.height(32.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                // Right: Inspect Settings button + Action button
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = onInspectClick,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(BackgroundInput)
+                            .border(1.dp, CardBorder, RoundedCornerShape(8.dp))
                     ) {
-                        Text(
-                            text = "Отключить",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Параметры подключения",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(17.dp)
                         )
                     }
-                } else {
-                    Button(
-                        onClick = onConnectClick,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NeonEmerald.copy(alpha = 0.15f),
-                            contentColor = NeonEmerald
-                        ),
-                        border = BorderStroke(1.dp, NeonEmerald),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.height(32.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                    ) {
-                        Text(
-                            text = "Подключить",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+
+                    if (isActiveConnected) {
+                        Button(
+                            onClick = onDisconnectClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonRed.copy(alpha = 0.15f),
+                                contentColor = NeonRed
+                            ),
+                            border = BorderStroke(1.dp, NeonRed),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(32.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        ) {
+                            Text(
+                                text = "Отключить",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = onConnectClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonEmerald.copy(alpha = 0.15f),
+                                contentColor = NeonEmerald
+                            ),
+                            border = BorderStroke(1.dp, NeonEmerald),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(32.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        ) {
+                            Text(
+                                text = "Подключить",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -652,22 +694,249 @@ private fun DesktopServerCard(
 }
 
 @Composable
-private fun DesktopTag(label: String, color: Color) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(color.copy(alpha = 0.12f))
-            .border(0.5.dp, color.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
-            .padding(horizontal = 5.dp, vertical = 1.5.dp)
+private fun ServerDetailsDialog(
+    server: ServerProfile,
+    onDismiss: () -> Unit,
+    onDeleteCustom: (() -> Unit)? = null
+) {
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    val (protocolIcon, protocolColor) = when (server.protocol) {
+                        VpnProtocol.AMNEZIA_WG -> Pair(R.drawable.ic_amnezia, NeonAmber)
+                        VpnProtocol.WIREGUARD -> Pair(R.drawable.ic_amnezia, NeonCyan)
+                        VpnProtocol.OPENCONNECT -> Pair(R.drawable.ic_openconnect, NeonCyan)
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(protocolColor.copy(alpha = 0.15f))
+                            .border(1.dp, protocolColor.copy(alpha = 0.4f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = protocolIcon),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column {
+                        Text(
+                            text = server.name,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        if (server.isFromSubscription) {
+                            DesktopTag(label = "ПОДПИСКА (ТОЛЬКО ЧТЕНИЕ)", color = NeonPurple)
+                        } else if (server.isCustom) {
+                            DesktopTag(label = "ПОЛЬЗОВАТЕЛЬСКОЕ", color = NeonAmber)
+                        }
+                    }
+                }
+
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(imageVector = Icons.Default.Close, contentDescription = "Закрыть", tint = TextSecondary)
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ServerInfoRow(label = "Протокол", value = server.protocol.displayName)
+                ServerInfoRow(label = "Адрес шлюза", value = "${server.serverAddress}:${server.serverPort}")
+
+                val dnsText = if (server.dnsServers.isNotEmpty()) {
+                    server.dnsServers.joinToString(", ")
+                } else {
+                    "По умолчанию (1.1.1.1, 1.0.0.1)"
+                }
+                ServerInfoRow(label = "DNS серверы", value = dnsText)
+
+                if (server.protocol == VpnProtocol.OPENCONNECT) {
+                    if (!server.username.isNullOrBlank()) {
+                        ServerInfoRow(label = "Пользователь", value = server.username)
+                    }
+                    if (!server.group.isNullOrBlank()) {
+                        ServerInfoRow(label = "Группа", value = server.group)
+                    }
+                }
+
+                val config = server.configText
+                if (!config.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Конфигурация",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = TextSecondary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(config))
+                                Toast.makeText(context, "Конфигурация скопирована в буфер", Toast.LENGTH_SHORT).show()
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = null,
+                                tint = NeonCyan,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Скопировать",
+                                color = NeonCyan,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 160.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(BackgroundInput)
+                            .border(0.5.dp, CardBorder, RoundedCornerShape(8.dp))
+                            .verticalScroll(rememberScrollState())
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = config,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = TextPrimary,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+
+                if (server.isFromSubscription) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(NeonPurple.copy(alpha = 0.08f))
+                            .border(0.5.dp, NeonPurple.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = "Параметры этого подключения управляются активной подпиской и защищены от изменений.",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = NeonPurple,
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = if (server.isCustom && onDeleteCustom != null) Arrangement.SpaceBetween else Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (server.isCustom && onDeleteCustom != null) {
+                    OutlinedButton(
+                        onClick = onDeleteCustom,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = NeonRed
+                        ),
+                        border = BorderStroke(1.dp, NeonRed.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp),
+                            tint = NeonRed
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Удалить",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NeonRed
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonCyan.copy(alpha = 0.15f),
+                        contentColor = NeonCyan
+                    ),
+                    border = BorderStroke(1.dp, NeonCyan),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(text = "Закрыть", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        containerColor = BackgroundCard,
+        tonalElevation = 6.dp,
+        shape = RoundedCornerShape(20.dp)
+    )
+}
+
+@Composable
+private fun ServerInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall.copy(
-                color = color,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = TextSecondary,
+                fontSize = 12.sp
             )
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace
+            ),
+            maxLines = 1
         )
     }
 }

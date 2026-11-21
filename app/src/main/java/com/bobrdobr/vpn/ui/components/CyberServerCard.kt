@@ -204,10 +204,18 @@ fun CyberServerCard(
 
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        // Protocol & Ping Badges Row
+                        // Protocol, Tag & Ping Badges Row
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             // Protocol badge
                             ProtocolBadge(protocol = server.protocol)
+
+                            if (server.isFromSubscription) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                DesktopTag(label = "sub", color = NeonPurple)
+                            } else if (server.isCustom) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                DesktopTag(label = "custom", color = NeonAmber)
+                            }
 
                             // Ping badge (only when ping is measured > 0)
                             if (server.pingMs > 0) {

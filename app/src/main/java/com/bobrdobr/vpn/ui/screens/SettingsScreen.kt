@@ -109,7 +109,7 @@ fun SettingsScreen(
         updateManager.manualCheckEvent.collect { result ->
             when (result) {
                 is AppUpdateManager.ManualCheckResult.UpToDate -> {
-                    Toast.makeText(context, "У вас установлена последняя версия (v0.8.6-prerelease)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "У вас установлена последняя версия (v0.8.7-prerelease)", Toast.LENGTH_SHORT).show()
                 }
                 is AppUpdateManager.ManualCheckResult.Available -> {
                     showUpdateDialog = true
@@ -148,13 +148,13 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         // Section 1: Security
-        SettingsSectionHeader(title = "БЕЗОПАСНОСТЬ И ШЛЮЗЫ")
+        SettingsSectionHeader(title = "БЕЗОПАСНОСТЬ И СЕТЬ")
 
         SettingsCard {
             SettingsToggleItem(
                 icon = Icons.Default.Shield,
-                title = "Экстренный затвор (Kill Switch)",
-                description = "Блокировать незащищенный трафик при падении туннеля",
+                title = "Kill Switch",
+                description = "Блокировать незащищенный трафик при падении VPN-соединения",
                 checked = killSwitchEnabled,
                 onCheckedChange = { viewModel.toggleKillSwitch(it) },
                 iconColor = NeonEmerald
@@ -165,7 +165,7 @@ fun SettingsScreen(
             SettingsToggleItem(
                 icon = Icons.Default.PowerSettingsNew,
                 title = "Автоподключение при старте",
-                description = "Автоматически закрывать шлюзы при включении устройства",
+                description = "Автоматически подключать VPN при включении устройства",
                 checked = autoConnectEnabled,
                 onCheckedChange = { viewModel.toggleAutoConnect(it) },
                 iconColor = NeonCyan
@@ -176,7 +176,7 @@ fun SettingsScreen(
             SettingsActionItem(
                 icon = Icons.Default.Apps,
                 title = "Раздельное туннелирование",
-                description = "Выбрать приложения, идущие в обход плотины (Split Tunneling)",
+                description = "Выбрать приложения, работающие в обход VPN",
                 iconColor = NeonAmber,
                 badge = if (splitEnabled && selectedApps.isNotEmpty()) "АКТИВНО (${selectedApps.size})" else if (splitEnabled) "ВКЛ" else null,
                 onClick = { viewModel.setNavigationTab(com.bobrdobr.vpn.ui.viewmodel.NavigationTab.SPLIT_TUNNEL) }
@@ -212,9 +212,9 @@ fun SettingsScreen(
             SettingsActionItem(
                 icon = Icons.Default.Info,
                 title = "БобрДобр VPN Mobile",
-                description = "v0.8.6-prerelease (Сборка 86) • Android ARM64 • x86_64",
+                description = "v0.8.7-prerelease (Сборка 87) • Android ARM64 • x86_64",
                 iconColor = NeonCyan,
-                badge = "v0.8.6",
+                badge = "v0.8.7",
                 onClick = {
                     viewModel.setNavigationTab(com.bobrdobr.vpn.ui.viewmodel.NavigationTab.DIAGNOSTICS)
                 }
@@ -643,7 +643,7 @@ private fun SettingsBypassItem(
 
             Column {
                 Text(
-                    text = "Режим Bypass (Исключение подсетей)",
+                    text = "Режим Bypass",
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary,
