@@ -266,6 +266,8 @@ fn run_packet_loop(
                                     &config,
                                     &telemetry,
                                     status_cb,
+                                    &udp_socket,
+                                    &mut udp_out_buf,
                                 );
                             }
                             PacketType::TransportData => {
@@ -426,6 +428,8 @@ fn handle_handshake_response(
     config: &AwgConfig,
     telemetry: &TelemetryTracker,
     status_cb: StatusCallbackFn,
+    udp_socket: &ProtectedUdpSocket,
+    udp_out_buf: &mut [u8],
 ) {
     match HandshakeResponse::parse(buf, &config.h2, config.s2) {
         Ok(resp) => {
@@ -438,6 +442,12 @@ fn handle_handshake_response(
                         rtt_ms, resp.receiver_index, resp.sender_index
                     );
                     notify_status(status_cb, STATUS_CONNECTED, "Connected to AmneziaWG tunnel");
+
+                    // Immediately confirm the new session to the server by sending a keepalive transport packet
+                    // (WireGuard Specification Section 5.4.6 & BoringTun).
+                    // This explicitly signals the server to promote next_keypair to current_keypair
+                    // and retire the previous session index, preventing packet stalls upon reconnect.
+                    send_keepalive(session, udp_socket, config, telemetry, udp_out_buf);
                 }
                 Err(e) => {
                     log_error!("Failed to process Handshake Response: {}", e);

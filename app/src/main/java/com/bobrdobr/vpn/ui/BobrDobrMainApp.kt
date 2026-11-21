@@ -1,5 +1,7 @@
 package com.bobrdobr.vpn.ui
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -84,6 +86,23 @@ fun BobrDobrMainApp(
     }
 
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
+    val activity = context as? Activity
+
+    // Intercept back gesture & hardware back buttons:
+    // Hierarchically navigate back to parent screens until Dashboard, then minimize app without breaking tunnels
+    BackHandler {
+        when (currentTab) {
+            NavigationTab.SPLIT_TUNNEL -> viewModel.setNavigationTab(NavigationTab.SETTINGS)
+            NavigationTab.DIAGNOSTICS -> viewModel.setNavigationTab(NavigationTab.SETTINGS)
+            NavigationTab.SERVERS -> viewModel.setNavigationTab(NavigationTab.DASHBOARD)
+            NavigationTab.SETTINGS -> viewModel.setNavigationTab(NavigationTab.DASHBOARD)
+            NavigationTab.SUBSCRIPTION -> viewModel.setNavigationTab(NavigationTab.DASHBOARD)
+            NavigationTab.DASHBOARD -> {
+                // Minimize/collapse application to background without tearing down VPN tunnels
+                activity?.moveTaskToBack(true)
+            }
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),

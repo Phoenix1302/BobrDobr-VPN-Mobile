@@ -199,37 +199,50 @@ fun ServerListScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Protocol Filter Tabs
-        TabRow(
-            selectedTabIndex = selectedFilterIndex,
-            containerColor = BackgroundCard,
-            contentColor = NeonCyan,
-            indicator = { tabPositions ->
-                TabRowDefaults.SecondaryIndicator(
-                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedFilterIndex]),
-                    color = NeonCyan,
-                    height = 2.dp
-                )
-            },
+        // Protocol Filter Tabs (Segmented bar with weighted widths to prevent text wrapping on any screen size)
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
+                .background(BackgroundCard)
                 .border(1.dp, CardBorder, RoundedCornerShape(12.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             filterTabs.forEachIndexed { index, title ->
-                Tab(
-                    selected = selectedFilterIndex == index,
-                    onClick = { selectedFilterIndex = index },
-                    text = {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = if (selectedFilterIndex == index) FontWeight.Bold else FontWeight.Normal,
-                                color = if (selectedFilterIndex == index) NeonCyan else TextSecondary
-                            )
+                val isSelected = selectedFilterIndex == index
+                val tabWeight = when (index) {
+                    0 -> 0.75f  // "Все"
+                    1 -> 1.15f  // "AmneziaWG"
+                    else -> 1.25f // "OpenConnect"
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(tabWeight)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (isSelected) NeonCyan.copy(alpha = 0.2f)
+                            else Color.Transparent
                         )
-                    }
-                )
+                        .then(
+                            if (isSelected) Modifier.border(1.dp, NeonCyan.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            else Modifier
+                        )
+                        .clickable { selectedFilterIndex = index }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = title,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) NeonCyan else TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    )
+                }
             }
         }
 
