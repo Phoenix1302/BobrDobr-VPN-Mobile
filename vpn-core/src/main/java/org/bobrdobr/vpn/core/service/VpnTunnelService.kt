@@ -170,9 +170,9 @@ class VpnTunnelService : VpnService(), SocketProtector {
                         activeConfig?.let { startPingMonitor(it) }
                     } else if (state is VpnState.Disconnected || state is VpnState.Error) {
                         stopPingMonitor()
-                        if (state is VpnState.Error) {
-                            closeTunResources()
-                        }
+                        watchdogJob?.cancel()
+                        watchdogJob = null
+                        closeTunResources()
                     }
                 }
             },
@@ -719,11 +719,13 @@ class VpnTunnelService : VpnService(), SocketProtector {
     private fun registerNetworkMonitor() {
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                handleNetworkChange(network)
+                connectivityManager.getNetworkCapabilities(network)?.let { capabilities ->
+                    if (isUsablePhysicalNetwork(capabilities)) handleNetworkChange(network)
+                }
             }
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                if (isUsablePhysicalNetwork(capabilities)) {
                     handleNetworkChange(network)
                 }
             }
@@ -745,7 +747,14 @@ class VpnTunnelService : VpnService(), SocketProtector {
         }
     }
 
+    private fun isUsablePhysicalNetwork(capabilities: NetworkCapabilities): Boolean {
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+    }
+
     private fun handleNetworkChange(network: Network) {
+        val capabilities = connectivityManager.getNetworkCapabilities(network)
+        if (capabilities == null || !isUsablePhysicalNetwork(capabilities)) return
         currentPhysicalNetwork = network
         val handle = network.networkHandle
         if (handle != lastUnderlyingNetworkHandle) {
@@ -834,16 +843,15 @@ class VpnTunnelService : VpnService(), SocketProtector {
             DebugLogger.w(TAG, "Error unregistering network callback: ${e.message}", e)
         }
 
-        closeTunResources()
-
-        val controller = engineController
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                controller.stopTunnel()
-            } catch (e: Exception) {
-                DebugLogger.w(TAG, "Error stopping native engine in onDestroy: ${e.message}")
-            }
+        // Stop the native worker before closing the TUN descriptor.  Closing
+        // the descriptor first races the Rust packet loop and can leave a
+        // native thread polling a reused fd during service teardown.
+        try {
+            engineController.stopTunnel()
+        } catch (e: Exception) {
+            DebugLogger.w(TAG, "Error stopping native engine in onDestroy: ${e.message}")
         }
+        closeTunResources()
 
         _currentConfig = null
         _vpnState.value = VpnState.Disconnected

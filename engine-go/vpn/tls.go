@@ -1,7 +1,6 @@
 package vpn
 
 import (
-	"bufio"
 	"encoding/binary"
 	"io"
 	"net"
@@ -14,7 +13,7 @@ import (
 )
 
 // TlsChannel processes CSTP stream from server over TLS
-func TlsChannel(conn net.Conn, bufR *bufio.Reader, cSess *session.ConnSession, resp *http.Response) {
+func TlsChannel(conn net.Conn, reader io.Reader, cSess *session.ConnSession, resp *http.Response) {
 	defer func() {
 		base.Info("TLS CSTP channel exiting")
 		if resp != nil && resp.Body != nil {
@@ -40,7 +39,7 @@ func TlsChannel(conn net.Conn, bufR *bufio.Reader, cSess *session.ConnSession, r
 		}
 
 		// Read 8-byte CSTP header: STF\x01 (4B) + length (2B) + type (1B) + flags (1B)
-		_, err := io.ReadFull(bufR, hdrBuf)
+		_, err := io.ReadFull(reader, hdrBuf)
 		if err != nil {
 			select {
 			case <-cSess.CloseChan:
@@ -67,7 +66,7 @@ func TlsChannel(conn net.Conn, bufR *bufio.Reader, cSess *session.ConnSession, r
 		}
 
 		if dataLen > 0 {
-			_, err = io.ReadFull(bufR, pl.Data)
+			_, err = io.ReadFull(reader, pl.Data)
 			if err != nil {
 				PutPayloadBuffer(pl)
 				base.Info("TLS CSTP read payload error:", err)
