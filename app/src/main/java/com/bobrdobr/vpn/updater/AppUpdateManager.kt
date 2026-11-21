@@ -50,9 +50,9 @@ class AppUpdateManager private constructor(private val appContext: Context) {
     private fun getCurrentVersion(): String {
         return try {
             val pInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
-            pInfo.versionName ?: "0.8.10-prerelease"
+            pInfo.versionName ?: "0.8.11-prerelease"
         } catch (_: Exception) {
-            "0.8.10-prerelease"
+            "0.8.11-prerelease"
         }
     }
 

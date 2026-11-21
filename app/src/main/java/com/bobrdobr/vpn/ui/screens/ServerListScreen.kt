@@ -1022,6 +1022,7 @@ private fun AddServerDialog(
 
     // AmneziaWG State
     var awgName by remember { mutableStateOf("") }
+    var loadedConfFileName by remember { mutableStateOf<String?>(null) }
     var awgConfigText by remember { mutableStateOf("") }
     val awgValidation = remember(awgConfigText) { ConfigValidator.validateAwg(awgConfigText) }
 
@@ -1052,9 +1053,29 @@ private fun AddServerDialog(
             try {
                 val content = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
                 awgConfigText = content
-                val fileName = uri.lastPathSegment?.split("/")?.lastOrNull()?.replace(".conf", "")
-                if (!fileName.isNullOrBlank()) {
-                    awgName = fileName
+
+                var extractedName: String? = null
+                if (uri.scheme == "content") {
+                    try {
+                        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (idx >= 0) {
+                                    extractedName = cursor.getString(idx)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+                if (extractedName.isNullOrBlank()) {
+                    extractedName = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+                }
+                val cleanName = extractedName?.removeSuffix(".conf")?.removeSuffix(".CONF")?.trim()
+                if (!cleanName.isNullOrBlank()) {
+                    loadedConfFileName = cleanName
+                    if (awgName.isBlank()) {
+                        awgName = cleanName
+                    }
                 }
                 Toast.makeText(context, "Файл конфигурации успешно загружен", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
@@ -1202,7 +1223,13 @@ private fun AddServerDialog(
                         value = awgName,
                         onValueChange = { awgName = it },
                         label = { Text("Название шлюза") },
-                        placeholder = { Text("Мой AmneziaWG Шлюз", color = TextMuted, fontSize = 13.sp) },
+                        placeholder = {
+                            Text(
+                                text = loadedConfFileName?.takeIf { it.isNotBlank() } ?: "Имя конфигурации (по файлу .conf)",
+                                color = TextMuted,
+                                fontSize = 13.sp
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         colors = outlinedColors()
@@ -1266,7 +1293,13 @@ private fun AddServerDialog(
                         value = ocName,
                         onValueChange = { ocName = it },
                         label = { Text("Название шлюза") },
-                        placeholder = { Text("Мой OpenConnect Шлюз", color = TextMuted, fontSize = 13.sp) },
+                        placeholder = {
+                            Text(
+                                text = ocUsername.trim().ifBlank { "Логин пользователя (по умолчанию)" },
+                                color = TextMuted,
+                                fontSize = 13.sp
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         colors = outlinedColors()
@@ -1343,9 +1376,11 @@ private fun AddServerDialog(
                 onClick = {
                     if (selectedTab == 0 && awgValidation is ValidationResult.SuccessAwg) {
                         val v = awgValidation
+                        val defaultAwgName = loadedConfFileName?.takeIf { it.isNotBlank() } ?: "AmneziaWG"
+                        val finalAwgName = awgName.trim().ifBlank { defaultAwgName }
                         val newServer = ServerProfile(
                             id = "custom-awg-${System.currentTimeMillis()}",
-                            name = awgName.ifBlank { "Мой AmneziaWG" },
+                            name = finalAwgName,
                             location = "Пользовательский",
                             countryCode = "DE",
                             flagEmoji = "⚡",
@@ -1367,9 +1402,11 @@ private fun AddServerDialog(
                     } else if (selectedTab == 1 && ocValidation is ValidationResult.SuccessOcserv) {
                         val v = ocValidation
                         val secretVal = ocSecret.ifBlank { "split" }
+                        val defaultOcName = ocUsername.trim().ifBlank { ocHost.trim().ifBlank { "OpenConnect" } }
+                        val finalOcName = ocName.trim().ifBlank { defaultOcName }
                         val newServer = ServerProfile(
                             id = "custom-oc-${System.currentTimeMillis()}",
-                            name = ocName.ifBlank { "Мой OpenConnect" },
+                            name = finalOcName,
                             location = "Пользовательский",
                             countryCode = "NL",
                             flagEmoji = "🛡️",

@@ -4,11 +4,22 @@ import android.app.Activity
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,11 +48,16 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,13 +65,27 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.random.Random
 import com.bobrdobr.vpn.R
 import org.bobrdobr.vpn.core.model.VpnProtocol
 import org.bobrdobr.vpn.core.model.VpnState
@@ -114,46 +145,175 @@ fun DashboardScreen(
 
     val isConnected = vpnState is VpnState.Connected
 
-    Column(
+    val haptic = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+
+    val beaverScale = remember { Animatable(1f) }
+    val beaverRotation = remember { Animatable(0f) }
+
+    var tapCount by remember { mutableStateOf(0) }
+    var tapResetJob by remember { mutableStateOf<Job?>(null) }
+    var beaverCenter by remember { mutableStateOf(Offset.Zero) }
+
+    val activeParticles = remember { mutableStateListOf<EasterParticleData>() }
+    var showBigPoop by remember { mutableStateOf(false) }
+    var easterToastText by remember { mutableStateOf<String?>(null) }
+    var toastJob by remember { mutableStateOf<Job?>(null) }
+
+    fun triggerPoopExplosion() {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        coroutineScope.launch {
+            beaverRotation.animateTo(
+                targetValue = beaverRotation.value + 360f,
+                animationSpec = tween(500, easing = FastOutSlowInEasing)
+            )
+        }
+        showBigPoop = true
+
+        toastJob?.cancel()
+        easterToastText = "Чистейший речной трафик! 🌊"
+        toastJob = coroutineScope.launch {
+            delay(3200)
+            easterToastText = null
+        }
+
+        val originX = if (beaverCenter.x > 0f) beaverCenter.x else 500f
+        val originY = if (beaverCenter.y > 0f) beaverCenter.y else 150f
+
+        val burstParticles = (0 until 24).map { i ->
+            val angle = (i * (360.0 / 24.0) + Random.nextDouble(-12.0, 12.0)) * Math.PI / 180.0
+            val speed = Random.nextFloat() * 450f + 350f
+            EasterParticleData(
+                id = System.nanoTime() + i,
+                emoji = if (i % 6 == 0) "🪵" else if (i % 8 == 0) "🌊" else "💩",
+                startX = originX,
+                startY = originY,
+                velocityX = (cos(angle) * speed).toFloat(),
+                velocityY = (sin(angle) * speed - 160f).toFloat(),
+                gravity = Random.nextFloat() * 450f + 650f,
+                startScale = Random.nextFloat() * 0.4f + 0.9f,
+                endScale = Random.nextFloat() * 0.3f + 0.6f,
+                startRotation = Random.nextFloat() * 360f,
+                rotationDelta = Random.nextFloat() * 720f - 360f,
+                durationMs = Random.nextInt(1400, 2000)
+            )
+        }
+        activeParticles.addAll(burstParticles)
+    }
+
+    fun handleBeaverTap() {
+        coroutineScope.launch {
+            beaverScale.animateTo(1.35f, spring(dampingRatio = 0.35f, stiffness = 700f))
+            beaverScale.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 500f))
+        }
+
+        tapCount++
+        tapResetJob?.cancel()
+        tapResetJob = coroutineScope.launch {
+            delay(2500)
+            tapCount = 0
+        }
+
+        if (tapCount >= 7) {
+            tapCount = 0
+            triggerPoopExplosion()
+        } else {
+            val originX = if (beaverCenter.x > 0f) beaverCenter.x else 500f
+            val originY = if (beaverCenter.y > 0f) beaverCenter.y else 150f
+            val emojis = listOf("❤️", "💖", "✨", "🔥", "⚡", "🪵", "🥰")
+            val newParticles = (0 until 3).map { i ->
+                EasterParticleData(
+                    id = System.nanoTime() + i,
+                    emoji = emojis.random(),
+                    startX = originX + Random.nextFloat() * 40f - 20f,
+                    startY = originY,
+                    velocityX = Random.nextFloat() * 160f - 80f,
+                    velocityY = -(Random.nextFloat() * 260f + 260f),
+                    gravity = 50f,
+                    startScale = 0.8f,
+                    endScale = 1.3f,
+                    startRotation = Random.nextFloat() * 40f - 20f,
+                    rotationDelta = Random.nextFloat() * 60f - 30f,
+                    durationMs = 1200
+                )
+            }
+            activeParticles.addAll(newParticles)
+        }
+    }
+
+    fun handleBeaverLongPress() {
+        tapCount = 0
+        triggerPoopExplosion()
+    }
+
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(BackgroundMain)
-            .padding(horizontal = 20.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Top App Header: Centered Brand with Mascot without circle (matches Image 6)
-        Row(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxSize()
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.ic_beaver),
-                contentDescription = "Logo",
-                modifier = Modifier.size(34.dp)
-            )
+            Spacer(modifier = Modifier.height(16.dp))
 
-            Spacer(modifier = Modifier.width(10.dp))
-
-            Text(
-                text = "БобрДобр VPN",
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontWeight = FontWeight.Black,
-                    fontSize = 22.sp,
-                    color = Color(0xFFFFA000),
-                    letterSpacing = 0.5.sp,
-                    shadow = Shadow(
-                        color = Color(0xFFB45309),
-                        offset = Offset(0f, 3f),
-                        blurRadius = 1.5f
+            // Top App Header: Centered Brand with Mascot
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .onGloballyPositioned { coords ->
+                            val pos = coords.positionInRoot()
+                            beaverCenter = Offset(pos.x + coords.size.width / 2f, pos.y + coords.size.height / 2f)
+                        }
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { handleBeaverTap() },
+                                onLongPress = { handleBeaverLongPress() }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_beaver),
+                        contentDescription = "Logo",
+                        modifier = Modifier
+                            .size(34.dp)
+                            .graphicsLayer {
+                                scaleX = beaverScale.value
+                                scaleY = beaverScale.value
+                                rotationZ = beaverRotation.value
+                            }
                     )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Text(
+                    text = "БобрДобр VPN",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Black,
+                        fontSize = 22.sp,
+                        color = Color(0xFFFFA000),
+                        letterSpacing = 0.5.sp,
+                        shadow = Shadow(
+                            color = Color(0xFFB45309),
+                            offset = Offset(0f, 3f),
+                            blurRadius = 1.5f
+                        )
+                    ),
+                    modifier = Modifier.clickable { handleBeaverTap() }
                 )
-            )
 
             // Neon Update Badge if an update is available
             if (updateState is UpdateState.UpdateAvailable) {
@@ -231,6 +391,72 @@ fun DashboardScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
     }
+
+    // Easter Egg Floating Particles Layer
+    Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        activeParticles.forEach { particle ->
+            key(particle.id) {
+                EasterParticleItem(
+                    particle = particle,
+                    onFinished = {
+                        activeParticles.remove(particle)
+                    }
+                )
+            }
+        }
+    }
+
+    // Easter Egg Big Poop Animated Popup
+    BigPoopOverlay(
+        visible = showBigPoop,
+        onFinished = { showBigPoop = false }
+    )
+
+    // Easter Egg Cyber Toast / Banner
+    AnimatedVisibility(
+        visible = easterToastText != null,
+        enter = fadeIn(tween(250)) + slideInVertically(initialOffsetY = { -it }),
+        exit = fadeOut(tween(300)) + slideOutVertically(targetOffsetY = { -it }),
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 18.dp, start = 20.dp, end = 20.dp)
+    ) {
+        Surface(
+            color = Color(0xFF1E1812),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, NeonAmber),
+            shadowElevation = 10.dp,
+            modifier = Modifier.neonGlow(NeonAmber, radius = 12.dp, alpha = 0.45f)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "💩",
+                    fontSize = 26.sp
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "Бобр одобряет! 🦫",
+                        color = NeonAmber,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        text = easterToastText ?: "",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+} // End root Box
 
     if (showQuickSwitchDialog) {
         QuickServerSwitchDialog(
@@ -432,4 +658,105 @@ private fun QuickServerSwitchDialog(
         tonalElevation = 6.dp,
         shape = RoundedCornerShape(20.dp)
     )
+}
+
+private data class EasterParticleData(
+    val id: Long,
+    val emoji: String,
+    val startX: Float,
+    val startY: Float,
+    val velocityX: Float,
+    val velocityY: Float,
+    val gravity: Float = 0f,
+    val startScale: Float = 1f,
+    val endScale: Float = 1f,
+    val startRotation: Float = 0f,
+    val rotationDelta: Float = 0f,
+    val durationMs: Int = 1200
+)
+
+@Composable
+private fun EasterParticleItem(
+    particle: EasterParticleData,
+    onFinished: () -> Unit
+) {
+    val progress = remember { Animatable(0f) }
+
+    LaunchedEffect(particle.id) {
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(
+                durationMillis = particle.durationMs,
+                easing = LinearEasing
+            )
+        )
+        onFinished()
+    }
+
+    val p = progress.value
+    val currentX = particle.startX + particle.velocityX * p
+    val currentY = particle.startY + particle.velocityY * p + 0.5f * particle.gravity * p * p
+    val currentAlpha = (1f - p).coerceIn(0f, 1f)
+    val currentScale = particle.startScale + (particle.endScale - particle.startScale) * p
+    val currentRotation = particle.startRotation + particle.rotationDelta * p
+
+    Text(
+        text = particle.emoji,
+        fontSize = (24 * currentScale).sp,
+        modifier = Modifier
+            .offset { IntOffset(currentX.roundToInt(), currentY.roundToInt()) }
+            .graphicsLayer {
+                rotationZ = currentRotation
+                alpha = currentAlpha
+            }
+    )
+}
+
+@Composable
+private fun BigPoopOverlay(
+    visible: Boolean,
+    onFinished: () -> Unit
+) {
+    if (!visible) return
+
+    val scale = remember { Animatable(0.2f) }
+    val alpha = remember { Animatable(1f) }
+    val rotation = remember { Animatable(-25f) }
+
+    LaunchedEffect(visible) {
+        launch {
+            scale.animateTo(
+                targetValue = 2.8f,
+                animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f)
+            )
+        }
+        launch {
+            rotation.animateTo(
+                targetValue = 15f,
+                animationSpec = tween(700, easing = FastOutSlowInEasing)
+            )
+        }
+        delay(650)
+        alpha.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(500, easing = LinearEasing)
+        )
+        onFinished()
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "💩",
+            fontSize = 90.sp,
+            modifier = Modifier.graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+                rotationZ = rotation.value
+                this.alpha = alpha.value
+            }
+        )
+    }
 }

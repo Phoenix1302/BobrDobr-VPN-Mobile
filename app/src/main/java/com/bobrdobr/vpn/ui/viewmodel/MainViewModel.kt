@@ -36,6 +36,7 @@ class MainViewModel : ViewModel() {
         const val PREFS_NAME = "bobrdobr_vpn_prefs"
         const val KEY_BYPASS_ENABLED = "key_bypass_enabled"
         const val KEY_BYPASS_SUBNETS = "key_bypass_subnets"
+        const val KEY_SELECTED_SERVER_ID = "key_selected_server_id"
         const val DEFAULT_BYPASS_SUBNETS = ""
 
         val EMPTY_SERVER = ServerProfile(
@@ -109,9 +110,17 @@ class MainViewModel : ViewModel() {
             repo.allServers.collect { list ->
                 _servers.value = list
                 if (list.isNotEmpty()) {
-                    if (!list.any { it.id == _selectedServer.value.id } || _selectedServer.value == EMPTY_SERVER) {
-                        _selectedServer.value = list.first()
+                    val savedServerId = prefs?.getString(KEY_SELECTED_SERVER_ID, null)
+                    val currentId = _selectedServer.value.id
+
+                    val targetServer = if (currentId != "none" && list.any { it.id == currentId }) {
+                        list.first { it.id == currentId }
+                    } else if (!savedServerId.isNullOrBlank() && list.any { it.id == savedServerId }) {
+                        list.first { it.id == savedServerId }
+                    } else {
+                        list.first()
                     }
+                    _selectedServer.value = targetServer
                 } else {
                     _selectedServer.value = EMPTY_SERVER
                 }
@@ -133,6 +142,7 @@ class MainViewModel : ViewModel() {
     fun selectServer(server: ServerProfile, context: Context? = null) {
         val prevServer = _selectedServer.value
         _selectedServer.value = server
+        prefs?.edit()?.putString(KEY_SELECTED_SERVER_ID, server.id)?.apply()
         if (context != null && prevServer.id != server.id && isTunnelActive()) {
             org.bobrdobr.vpn.core.logger.DebugLogger.i("MainViewModel", "Active tunnel detected while switching to '${server.name}'. Reconnecting...")
             connectDirectly(context)
@@ -141,6 +151,7 @@ class MainViewModel : ViewModel() {
 
     fun connectToServer(context: Context, server: ServerProfile, launchVpnPrepare: ((Intent) -> Unit)? = null) {
         _selectedServer.value = server
+        prefs?.edit()?.putString(KEY_SELECTED_SERVER_ID, server.id)?.apply()
         val prepareIntent = VpnService.prepare(context)
         if (prepareIntent != null && launchVpnPrepare != null) {
             launchVpnPrepare(prepareIntent)
@@ -160,11 +171,15 @@ class MainViewModel : ViewModel() {
         val repo = ServerRepository.getInstance(context)
         repo.addCustomServer(server)
         _selectedServer.value = server
+        prefs?.edit()?.putString(KEY_SELECTED_SERVER_ID, server.id)?.apply()
     }
 
     fun removeServer(context: Context, id: String) {
         val repo = ServerRepository.getInstance(context)
         repo.removeServer(id)
+        if (_selectedServer.value.id == id) {
+            prefs?.edit()?.remove(KEY_SELECTED_SERVER_ID)?.apply()
+        }
     }
 
     fun clearSubscription(context: Context) {
