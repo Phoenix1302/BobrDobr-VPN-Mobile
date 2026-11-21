@@ -34,6 +34,12 @@ class NativeEngineController(
     private val lock = Any()
 
     private val statusListener = JniBridge.StatusListener { statusCode, message ->
+        synchronized(lock) {
+            if (activeEngine == null && statusCode == JniBridge.STATUS_DISCONNECTED) {
+                DebugLogger.d(TAG, "Ignoring STATUS_DISCONNECTED callback from decommissioned/stopped engine")
+                return@StatusListener
+            }
+        }
         val statusName = JniBridge.statusToString(statusCode)
         DebugLogger.i(TAG, "Native status update callback: code=$statusCode ($statusName), message='$message'")
         val currentProtocol = activeConfig?.protocol ?: VpnProtocol.AMNEZIA_WG
@@ -112,9 +118,9 @@ class NativeEngineController(
         stopStatsPolling()
         val engine = activeEngine ?: return Result.success(Unit)
         DebugLogger.i(TAG, "Stopping active engine (${engine::class.java.simpleName})...")
-        val res = engine.stop()
         activeEngine = null
         activeConfig = null
+        val res = engine.stop()
         return res
     }
 

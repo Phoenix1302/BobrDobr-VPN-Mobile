@@ -28,7 +28,7 @@ class BobrDobrApp : Application() {
             UiLogger.log(uiLevel, entry.tag, entry.message)
         }
 
-        CoreLogger.i(TAG, "BobrDobrApp initialized (v0.8.9-prerelease, build 89)")
+        CoreLogger.i(TAG, "BobrDobrApp initialized (v0.8.10-prerelease, build 90)")
 
         // Schedule background subscription synchronization with full crash immunity
         try {

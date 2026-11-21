@@ -135,6 +135,7 @@ fun BobrDobrMainApp(
                     viewModel = viewModel
                 )
                 NavigationTab.SPLIT_TUNNEL -> SplitTunnelScreen(
+                    viewModel = viewModel,
                     onBack = { viewModel.setNavigationTab(NavigationTab.SETTINGS) }
                 )
                 NavigationTab.DIAGNOSTICS -> DiagnosticsScreen(

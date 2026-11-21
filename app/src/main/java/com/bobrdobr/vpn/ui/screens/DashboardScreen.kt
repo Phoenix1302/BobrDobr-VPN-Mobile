@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,8 +26,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,22 +51,30 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bobrdobr.vpn.R
+import org.bobrdobr.vpn.core.model.VpnProtocol
 import org.bobrdobr.vpn.core.model.VpnState
 import com.bobrdobr.vpn.ui.components.BeaverConnectButton
 import com.bobrdobr.vpn.ui.components.CyberServerCard
 import com.bobrdobr.vpn.ui.components.DamStatusBar
+import com.bobrdobr.vpn.ui.components.DesktopTag
 import com.bobrdobr.vpn.ui.components.HydroTelemetryBar
+import com.bobrdobr.vpn.ui.components.ProtocolBadge
 import com.bobrdobr.vpn.ui.components.UpdateDialog
+import com.bobrdobr.vpn.ui.model.ServerProfile
 import com.bobrdobr.vpn.ui.theme.BackgroundCard
+import com.bobrdobr.vpn.ui.theme.BackgroundCardActive
+import com.bobrdobr.vpn.ui.theme.BackgroundInput
 import com.bobrdobr.vpn.ui.theme.BackgroundMain
 import com.bobrdobr.vpn.ui.theme.CardBorder
 import com.bobrdobr.vpn.ui.theme.NeonAmber
 import com.bobrdobr.vpn.ui.theme.NeonCyan
 import com.bobrdobr.vpn.ui.theme.NeonEmerald
+import com.bobrdobr.vpn.ui.theme.NeonPurple
 import com.bobrdobr.vpn.ui.theme.TextMuted
 import com.bobrdobr.vpn.ui.theme.TextPrimary
 import com.bobrdobr.vpn.ui.theme.TextSecondary
@@ -80,10 +97,12 @@ fun DashboardScreen(
     val vpnState by viewModel.vpnState.collectAsStateWithLifecycle()
     val tunnelStats by viewModel.tunnelStats.collectAsStateWithLifecycle()
     val selectedServer by viewModel.selectedServer.collectAsStateWithLifecycle()
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
 
     val updateManager = remember { AppUpdateManager.getInstance(context) }
     val updateState by updateManager.updateState.collectAsStateWithLifecycle()
     var showUpdateDialog by remember { mutableStateOf(false) }
+    var showQuickSwitchDialog by remember { mutableStateOf(false) }
 
     val vpnPrepareLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -193,7 +212,13 @@ fun DashboardScreen(
         CyberServerCard(
             server = selectedServer,
             isConnected = isConnected,
-            onClick = onNavigateToServers
+            onClick = {
+                if (servers.isNotEmpty()) {
+                    showQuickSwitchDialog = true
+                } else {
+                    onNavigateToServers()
+                }
+            }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -205,6 +230,23 @@ fun DashboardScreen(
         )
 
         Spacer(modifier = Modifier.height(24.dp))
+    }
+
+    if (showQuickSwitchDialog) {
+        QuickServerSwitchDialog(
+            servers = servers,
+            selectedServer = selectedServer,
+            isConnected = isConnected,
+            onSelectServer = { server ->
+                viewModel.selectServer(server, context = context)
+                showQuickSwitchDialog = false
+            },
+            onNavigateToFullList = {
+                showQuickSwitchDialog = false
+                onNavigateToServers()
+            },
+            onDismiss = { showQuickSwitchDialog = false }
+        )
     }
 
     val availableRelease = (updateState as? UpdateState.UpdateAvailable)?.release
@@ -221,4 +263,173 @@ fun DashboardScreen(
             }
         )
     }
+}
+
+@Composable
+private fun QuickServerSwitchDialog(
+    servers: List<ServerProfile>,
+    selectedServer: ServerProfile,
+    isConnected: Boolean,
+    onSelectServer: (ServerProfile) -> Unit,
+    onNavigateToFullList: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Dns,
+                        contentDescription = null,
+                        tint = NeonCyan,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Выбор шлюза",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(BackgroundCardActive.copy(alpha = 0.6f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Закрыть",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                servers.forEach { server ->
+                    val isCurrent = server.id == selectedServer.id
+                    val borderColor = if (isCurrent && isConnected) NeonEmerald else if (isCurrent) NeonCyan else CardBorder
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isCurrent) BackgroundCardActive else BackgroundInput)
+                            .border(if (isCurrent) 1.5.dp else 0.5.dp, borderColor, RoundedCornerShape(12.dp))
+                            .clickable { onSelectServer(server) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            val (protocolIcon, protocolColor) = when (server.protocol) {
+                                VpnProtocol.AMNEZIA_WG -> Pair(R.drawable.ic_amnezia, NeonAmber)
+                                VpnProtocol.WIREGUARD -> Pair(R.drawable.ic_amnezia, NeonCyan)
+                                VpnProtocol.OPENCONNECT -> Pair(R.drawable.ic_openconnect, NeonCyan)
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(protocolColor.copy(alpha = 0.15f))
+                                    .border(1.dp, protocolColor.copy(alpha = 0.4f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    painter = painterResource(id = protocolIcon),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(10.dp))
+
+                            Column {
+                                Text(
+                                    text = server.name,
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    ProtocolBadge(protocol = server.protocol)
+                                    if (server.isFromSubscription) {
+                                        DesktopTag(label = "sub", color = NeonPurple)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isCurrent) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isConnected) NeonEmerald.copy(alpha = 0.15f) else NeonCyan.copy(alpha = 0.15f))
+                                    .border(0.5.dp, if (isConnected) NeonEmerald else NeonCyan, RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 7.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = if (isConnected) "Активен" else "Выбран",
+                                    color = if (isConnected) NeonEmerald else NeonCyan,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onNavigateToFullList,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NeonCyan.copy(alpha = 0.12f),
+                    contentColor = NeonCyan
+                ),
+                border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.6f)),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = NeonCyan
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = "Все серверы и управление", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        containerColor = BackgroundCard,
+        tonalElevation = 6.dp,
+        shape = RoundedCornerShape(20.dp)
+    )
 }

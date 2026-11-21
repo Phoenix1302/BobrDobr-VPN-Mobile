@@ -174,7 +174,9 @@ class VpnTunnelService : VpnService(), SocketProtector {
                         stopPingMonitor()
                         watchdogJob?.cancel()
                         watchdogJob = null
-                        closeTunResources()
+                        if (_vpnState.value !is VpnState.Connecting) {
+                            closeTunResources()
+                        }
                     }
                 }
             },
@@ -464,6 +466,14 @@ class VpnTunnelService : VpnService(), SocketProtector {
             DebugLogger.w(TAG, "Session ID mismatch ($sessionId vs ${sessionCounter.get()}), aborting establishTunnel")
             return
         }
+
+        stopPingMonitor()
+        try {
+            engineController.stopTunnel()
+        } catch (e: Exception) {
+            DebugLogger.w(TAG, "Error stopping previous engine in establishTunnel: ${e.message}")
+        }
+        closeTunResources()
 
         DebugLogger.i(TAG, "Establishing TUN interface [session=$sessionId]: server='${config.serverName}' (${config.protocol.displayName}), MTU=${config.mtu}...")
 

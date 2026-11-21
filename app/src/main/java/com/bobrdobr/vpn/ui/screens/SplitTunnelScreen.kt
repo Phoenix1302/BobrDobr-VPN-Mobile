@@ -47,6 +47,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -79,6 +80,7 @@ import com.bobrdobr.vpn.ui.theme.NeonEmerald
 import com.bobrdobr.vpn.ui.theme.TextMuted
 import com.bobrdobr.vpn.ui.theme.TextPrimary
 import com.bobrdobr.vpn.ui.theme.TextSecondary
+import com.bobrdobr.vpn.ui.viewmodel.MainViewModel
 
 /**
  * SplitTunnelScreen: Per-App Split Tunneling configuration screen in BobrDobr cyber theme.
@@ -86,7 +88,8 @@ import com.bobrdobr.vpn.ui.theme.TextSecondary
 @Composable
 fun SplitTunnelScreen(
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewModel: MainViewModel? = null
 ) {
     val context = LocalContext.current
     val splitManager = remember { SplitTunnelManager.getInstance(context) }
@@ -94,6 +97,21 @@ fun SplitTunnelScreen(
     val isEnabled by splitManager.isEnabled.collectAsStateWithLifecycle()
     val mode by splitManager.mode.collectAsStateWithLifecycle()
     val selectedApps by splitManager.selectedApps.collectAsStateWithLifecycle()
+
+    val initialEnabled = remember { isEnabled }
+    val initialMode = remember { mode }
+    val initialApps = remember { selectedApps }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (viewModel?.isTunnelActive() == true) {
+                val changed = isEnabled != initialEnabled || mode != initialMode || selectedApps != initialApps
+                if (changed) {
+                    viewModel.restartTunnelIfActive(context)
+                }
+            }
+        }
+    }
 
     var rawApps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -209,7 +227,12 @@ fun SplitTunnelScreen(
 
                 Switch(
                     checked = isEnabled,
-                    onCheckedChange = { splitManager.setEnabled(it) },
+                    onCheckedChange = {
+                        splitManager.setEnabled(it)
+                        if (viewModel?.isTunnelActive() == true) {
+                            viewModel.restartTunnelIfActive(context)
+                        }
+                    },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = BackgroundMain,
                         checkedTrackColor = NeonEmerald,
@@ -235,7 +258,12 @@ fun SplitTunnelScreen(
                     isSelected = mode == SplitTunnelMode.WHITELIST,
                     activeColor = NeonEmerald,
                     modifier = Modifier.weight(1f),
-                    onClick = { splitManager.setMode(SplitTunnelMode.WHITELIST) }
+                    onClick = {
+                        splitManager.setMode(SplitTunnelMode.WHITELIST)
+                        if (viewModel?.isTunnelActive() == true) {
+                            viewModel.restartTunnelIfActive(context)
+                        }
+                    }
                 )
 
                 // Blacklist Mode
@@ -245,7 +273,12 @@ fun SplitTunnelScreen(
                     isSelected = mode == SplitTunnelMode.BLACKLIST,
                     activeColor = NeonAmber,
                     modifier = Modifier.weight(1f),
-                    onClick = { splitManager.setMode(SplitTunnelMode.BLACKLIST) }
+                    onClick = {
+                        splitManager.setMode(SplitTunnelMode.BLACKLIST)
+                        if (viewModel?.isTunnelActive() == true) {
+                            viewModel.restartTunnelIfActive(context)
+                        }
+                    }
                 )
             }
 

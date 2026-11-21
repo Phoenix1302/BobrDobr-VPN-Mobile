@@ -313,8 +313,7 @@ fun ServerListScreen(
                         isSelected = isSelected,
                         isActiveConnected = isCurrentServerActive,
                         onConnectClick = {
-                            viewModel.selectServer(server)
-                            viewModel.toggleVpn(context) { intent ->
+                            viewModel.connectToServer(context, server) { intent ->
                                 vpnPrepareLauncher.launch(intent)
                             }
                         },
@@ -322,7 +321,7 @@ fun ServerListScreen(
                             VpnTunnelService.stop(context)
                         },
                         onSelectClick = {
-                            viewModel.selectServer(server)
+                            viewModel.selectServer(server, context = context)
                             onBack()
                         },
                         onInspectClick = {

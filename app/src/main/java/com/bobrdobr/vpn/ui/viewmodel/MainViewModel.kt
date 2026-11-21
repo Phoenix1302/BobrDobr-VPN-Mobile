@@ -123,8 +123,37 @@ class MainViewModel : ViewModel() {
         _currentTab.value = tab
     }
 
-    fun selectServer(server: ServerProfile) {
+    fun isTunnelActive(): Boolean {
+        return when (vpnState.value) {
+            is VpnState.Connected, is VpnState.Connecting, is VpnState.Reconnecting -> true
+            else -> false
+        }
+    }
+
+    fun selectServer(server: ServerProfile, context: Context? = null) {
+        val prevServer = _selectedServer.value
         _selectedServer.value = server
+        if (context != null && prevServer.id != server.id && isTunnelActive()) {
+            org.bobrdobr.vpn.core.logger.DebugLogger.i("MainViewModel", "Active tunnel detected while switching to '${server.name}'. Reconnecting...")
+            connectDirectly(context)
+        }
+    }
+
+    fun connectToServer(context: Context, server: ServerProfile, launchVpnPrepare: ((Intent) -> Unit)? = null) {
+        _selectedServer.value = server
+        val prepareIntent = VpnService.prepare(context)
+        if (prepareIntent != null && launchVpnPrepare != null) {
+            launchVpnPrepare(prepareIntent)
+        } else {
+            connectDirectly(context)
+        }
+    }
+
+    fun restartTunnelIfActive(context: Context) {
+        if (isTunnelActive() && _selectedServer.value != EMPTY_SERVER && _selectedServer.value.serverAddress.isNotBlank()) {
+            org.bobrdobr.vpn.core.logger.DebugLogger.i("MainViewModel", "Tunnel restart requested with updated routing parameters...")
+            connectDirectly(context)
+        }
     }
 
     fun addCustomServer(context: Context, server: ServerProfile) {
@@ -152,18 +181,20 @@ class MainViewModel : ViewModel() {
         _autoConnectEnabled.value = enabled
     }
 
-    fun toggleBypass(enabled: Boolean) {
+    fun toggleBypass(enabled: Boolean, context: Context? = null) {
         _bypassEnabled.value = enabled
         prefs?.edit()?.putBoolean(KEY_BYPASS_ENABLED, enabled)?.apply()
+        context?.let { restartTunnelIfActive(it) }
     }
 
-    fun toggleBypassLocal(enabled: Boolean) {
-        toggleBypass(enabled)
+    fun toggleBypassLocal(enabled: Boolean, context: Context? = null) {
+        toggleBypass(enabled, context)
     }
 
-    fun setBypassSubnets(subnets: String) {
+    fun setBypassSubnets(subnets: String, context: Context? = null) {
         _bypassSubnets.value = subnets
         prefs?.edit()?.putString(KEY_BYPASS_SUBNETS, subnets)?.apply()
+        context?.let { restartTunnelIfActive(it) }
     }
 
     fun setDns(dns: String) {
