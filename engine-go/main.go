@@ -685,9 +685,8 @@ func start_tunnel_v2(tun_fd C.int, config_json *C.char, cb C.protect_callback_fn
 		tunFile, err = prepareTunFile(retTunFd)
 		if err != nil {
 			base.Error("Failed to prepare duplicated TUN file from callback:", err)
-			_ = syscall.Close(retTunFd)
 			cSess.Close()
-			reportStatus(C.STATUS_ERROR, "Failed to wrap callback TUN descriptor")
+			reportStatus(C.STATUS_ERROR, fmt.Sprintf("Failed to wrap callback TUN descriptor: %v", err))
 			return failConnect(C.ENGINE_ERR_SOCKET_INIT)
 		}
 	} else {
