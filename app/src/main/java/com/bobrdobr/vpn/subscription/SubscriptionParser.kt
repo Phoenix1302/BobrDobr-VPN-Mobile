@@ -297,10 +297,25 @@ object SubscriptionParser {
                 }
             }
 
-            if (endpoint.isNotEmpty() && endpoint.contains(":")) {
-                val epParts = endpoint.split(":")
-                serverAddr = epParts[0].trim()
-                serverPort = epParts[1].toIntOrNull() ?: serverPort
+            if (endpoint.isNotBlank()) {
+                val trimmedEndpoint = endpoint.trim()
+                if (trimmedEndpoint.startsWith("[")) {
+                    val closingBracket = trimmedEndpoint.indexOf(']')
+                    if (closingBracket > 0) {
+                        serverAddr = trimmedEndpoint.substring(1, closingBracket)
+                        val portText = trimmedEndpoint.substring(closingBracket + 1).removePrefix(":")
+                        serverPort = portText.toIntOrNull() ?: serverPort
+                    }
+                } else {
+                    val lastColon = trimmedEndpoint.lastIndexOf(':')
+                    val suffix = if (lastColon >= 0) trimmedEndpoint.substring(lastColon + 1) else ""
+                    if (lastColon >= 0 && suffix.toIntOrNull() != null && trimmedEndpoint.indexOf(':') == lastColon) {
+                        serverAddr = trimmedEndpoint.substring(0, lastColon)
+                        serverPort = suffix.toInt()
+                    } else {
+                        serverAddr = trimmedEndpoint
+                    }
+                }
             } else if (serverAddr.isEmpty()) {
                 serverAddr = obj.optString("host", obj.optString("server", "127.0.0.1"))
                 serverPort = obj.optInt("port", 51820)

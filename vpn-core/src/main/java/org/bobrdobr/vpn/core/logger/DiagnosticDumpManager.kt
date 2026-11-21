@@ -36,9 +36,9 @@ object DiagnosticDumpManager {
             } else {
                 @Suppress("DEPRECATION")
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            } ?: "0.8.12-prerelease"
+            } ?: "0.8.13-prerelease"
         } catch (_: Exception) {
-            "0.8.12-prerelease"
+            "0.8.13-prerelease"
         }
     }
 

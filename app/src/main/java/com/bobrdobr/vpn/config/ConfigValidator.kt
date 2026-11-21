@@ -56,7 +56,7 @@ object ConfigValidator {
         var line: String?
 
         while (reader.readLine().also { line = it } != null) {
-            val l = line!!.trim()
+            val l = line?.trim().orEmpty()
             if (l.isEmpty() || l.startsWith("#") || l.startsWith(";")) continue
 
             if (l.startsWith("[") && l.endsWith("]")) {

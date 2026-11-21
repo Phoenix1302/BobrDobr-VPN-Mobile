@@ -42,12 +42,12 @@ object DiagnosticDumpManager {
             }
         } catch (_: Exception) { null }
 
-        val versionName = pkgInfo?.versionName ?: "0.8.12-prerelease"
+        val versionName = pkgInfo?.versionName ?: "0.8.13-prerelease"
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            pkgInfo?.longVersionCode ?: 88L
+            pkgInfo?.longVersionCode ?: 93L
         } else {
             @Suppress("DEPRECATION")
-            (pkgInfo?.versionCode?.toLong() ?: 88L)
+            (pkgInfo?.versionCode?.toLong() ?: 93L)
         }
         val targetSdk = context.applicationInfo.targetSdkVersion
         val minSdk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) context.applicationInfo.minSdkVersion else 26
@@ -122,7 +122,7 @@ object DiagnosticDumpManager {
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, "BobrDobr VPN Diagnostic Dump ($timestamp)")
-                putExtra(Intent.EXTRA_TEXT, "Диагностический дамп BobrDobr VPN Mobile v0.8.12-prerelease\nФайл прикреплен.")
+                putExtra(Intent.EXTRA_TEXT, "Диагностический дамп BobrDobr VPN Mobile v0.8.13-prerelease\nФайл прикреплен.")
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }

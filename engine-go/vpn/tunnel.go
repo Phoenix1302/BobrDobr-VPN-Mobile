@@ -18,19 +18,14 @@ import (
 	"openconnect-worker/utils"
 )
 
-var (
-	cstpReqHeaders = make(map[string]string)
-)
-
-func init() {
-	cstpReqHeaders["X-CSTP-Version"] = "1"
-	cstpReqHeaders["X-CSTP-Protocol"] = "Copyright (c) 2004 Cisco Systems, Inc."
-	cstpReqHeaders["X-CSTP-VPNAddress-Type"] = "IPv4"
-	cstpReqHeaders["X-CSTP-MTU"] = "1360"
-	cstpReqHeaders["X-CSTP-Base-MTU"] = "1360"
-}
-
-func initTunnelParams() {
+func initTunnelParams() map[string]string {
+	headers := map[string]string{
+		"X-CSTP-Version":         "1",
+		"X-CSTP-Protocol":        "Copyright (c) 2004 Cisco Systems, Inc.",
+		"X-CSTP-VPNAddress-Type": "IPv4",
+		"X-CSTP-MTU":             "1360",
+		"X-CSTP-Base-MTU":        "1360",
+	}
 	sessionToken := session.Sess.SessionToken
 	if sessionToken == "" && auth.WebVpnCookie != "" {
 		sessionToken = auth.WebVpnCookie
@@ -39,24 +34,27 @@ func initTunnelParams() {
 	if sessionToken == "" {
 		base.Error("Warning: sessionToken is empty during CSTP tunnel initialization!")
 	}
-	cstpReqHeaders["Cookie"] = "webvpn=" + sessionToken
+	headers["Cookie"] = "webvpn=" + sessionToken
 	if auth.Prof.LocalIP != "" {
-		cstpReqHeaders["X-CSTP-Local-VPNAddress-IP4"] = auth.Prof.LocalIP
-	} else {
-		delete(cstpReqHeaders, "X-CSTP-Local-VPNAddress-IP4")
+		headers["X-CSTP-Local-VPNAddress-IP4"] = auth.Prof.LocalIP
 	}
 
 	session.Sess.PreMasterSecret, _ = utils.MakeMasterSecret()
-	cstpReqHeaders["X-DTLS-Master-Secret"] = hex.EncodeToString(session.Sess.PreMasterSecret)
-	cstpReqHeaders["X-DTLS12-CipherSuite"] = "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:AES128-GCM-SHA256"
-	base.Debug("CSTP init params: Cookie=webvpn=" + sessionToken)
+	headers["X-DTLS-Master-Secret"] = hex.EncodeToString(session.Sess.PreMasterSecret)
+	headers["X-DTLS12-CipherSuite"] = "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:AES128-GCM-SHA256"
+	base.Debug("CSTP init params: Cookie present=", sessionToken != "", ", length=", len(sessionToken))
+	return headers
 }
 
 // SetupTunnel executes AnyConnect HTTP CONNECT command to establish CSTP and DTLS channels
 func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) {
-	initTunnelParams()
+	headers := initTunnelParams()
 
 	connectUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel"
+	usingCamouflage := auth.Prof.SecretKey != ""
+	if usingCamouflage {
+		connectUrl = auth.Prof.Scheme + auth.Prof.HostWithPort + "/?" + auth.Prof.SecretKey
+	}
 	req, err := http.NewRequest("CONNECT", connectUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CONNECT request: %w", err)
@@ -72,7 +70,7 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 	base.Info("CONNECT", connectUrl, "Host:", req.Host)
 
 	utils.SetCommonHeader(req)
-	for k, v := range cstpReqHeaders {
+	for k, v := range headers {
 		req.Header[k] = []string{v}
 	}
 
@@ -115,7 +113,7 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 	}
 
 	// Fallback retry with camouflage secret if standard path is rejected with 404/405
-	if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) && auth.Prof.SecretKey != "" {
+	if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) && auth.Prof.SecretKey != "" && !usingCamouflage {
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
@@ -124,12 +122,12 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 			auth.Conn = nil
 		}
 		base.Info("Standard CSTP path returned", resp.StatusCode, "- attempting retry with camouflage secret")
-		fallbackUrl := connectUrl + "?" + auth.Prof.SecretKey
+		fallbackUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/?" + auth.Prof.SecretKey
 		req2, err2 := http.NewRequest("CONNECT", fallbackUrl, nil)
 		if err2 == nil {
 			req2.Host = req.Host
 			utils.SetCommonHeader(req2)
-			for k, v := range cstpReqHeaders {
+			for k, v := range headers {
 				req2.Header[k] = []string{v}
 			}
 			ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)

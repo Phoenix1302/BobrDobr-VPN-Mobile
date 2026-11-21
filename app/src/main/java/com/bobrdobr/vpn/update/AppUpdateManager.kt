@@ -22,6 +22,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import com.bobrdobr.vpn.BuildConfig
 
 data class GitHubRelease(
     val tagName: String,
@@ -53,8 +54,8 @@ class AppUpdateManager private constructor(private val appContext: Context) {
 
     companion object {
         private const val TAG = "AppUpdateManager"
-        const val CURRENT_VERSION_NAME = "0.8.12-prerelease"
-        const val CURRENT_VERSION_CODE = 92
+        const val CURRENT_VERSION_NAME = BuildConfig.VERSION_NAME
+        const val CURRENT_VERSION_CODE = BuildConfig.VERSION_CODE
         const val GITHUB_REPO_URL = "https://github.com/Phoenix1302/BobrDobr-VPN-Mobile"
         const val AUTHOR_PROFILE_URL = "https://github.com/Phoenix1302"
 

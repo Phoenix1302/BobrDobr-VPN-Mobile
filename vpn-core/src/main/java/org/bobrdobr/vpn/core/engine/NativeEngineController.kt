@@ -6,6 +6,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 import org.bobrdobr.vpn.core.logger.DebugLogger
 import org.bobrdobr.vpn.core.model.TunnelConfig
 import org.bobrdobr.vpn.core.model.TunnelStats
@@ -32,13 +33,14 @@ class NativeEngineController(
     private var activeConfig: TunnelConfig? = null
     private var statsJob: Job? = null
     private val lock = Any()
+    private val sessionGeneration = AtomicLong(0)
 
-    private val statusListener = JniBridge.StatusListener { statusCode, message ->
+    private fun statusListenerFor(generation: Long) = JniBridge.StatusListener { statusCode, message ->
         val currentProtocol: VpnProtocol
         val currentServer: String?
         synchronized(lock) {
-            if (activeEngine == null) {
-                DebugLogger.d(TAG, "Ignoring callback code=$statusCode ($message) from decommissioned/stopped engine")
+            if (generation != sessionGeneration.get() || activeEngine == null) {
+                DebugLogger.d(TAG, "Ignoring callback from stale engine generation=$generation code=$statusCode")
                 return@StatusListener
             }
             currentProtocol = activeConfig?.protocol ?: VpnProtocol.AMNEZIA_WG
@@ -61,6 +63,10 @@ class NativeEngineController(
             )
             else -> VpnState.Disconnected
         }
+        if (generation != sessionGeneration.get()) {
+            DebugLogger.d(TAG, "Ignoring stale callback before dispatch: generation=$generation current=${sessionGeneration.get()}")
+            return@StatusListener
+        }
         onStateChanged(newState)
     }
 
@@ -82,22 +88,34 @@ class NativeEngineController(
         // Stop any currently running engine first WITHOUT holding lock to prevent deadlocks
         stopInternal()
 
+        val generation = sessionGeneration.incrementAndGet()
+        val engine: IVpnEngine
+
         synchronized(lock) {
             activeConfig = config
-            val engine: IVpnEngine = when (config.protocol) {
+            engine = when (config.protocol) {
                 VpnProtocol.AMNEZIA_WG, VpnProtocol.WIREGUARD -> {
                     DebugLogger.i(TAG, "Instantiating RustVpnEngine for ${config.protocol.displayName}")
-                    RustVpnEngine(statusListener)
+                    RustVpnEngine(statusListenerFor(generation))
                 }
                 VpnProtocol.OPENCONNECT -> {
                     DebugLogger.i(TAG, "Instantiating GoVpnEngine for ${config.protocol.displayName}")
-                    GoVpnEngine(statusListener)
+                    GoVpnEngine(statusListenerFor(generation))
                 }
             }
 
             activeEngine = engine
+        }
 
-            val result = engine.start(tunFd, config.rawConfigJson, protector, tunConfigCallback)
+        // Native start may synchronously invoke a JNI callback. Do not hold lock
+        // while entering native code, otherwise the callback can deadlock here.
+        val result = engine.start(tunFd, config.rawConfigJson, protector, tunConfigCallback)
+        var staleStart = false
+        synchronized(lock) {
+            if (generation != sessionGeneration.get() || activeEngine !== engine) {
+                DebugLogger.w(TAG, "Discarding start result from stale engine generation=$generation")
+                staleStart = true
+            } else {
             if (result.isSuccess) {
                 DebugLogger.i(TAG, "Native engine started successfully. Commencing stats polling.")
                 startStatsPolling()
@@ -107,9 +125,10 @@ class NativeEngineController(
                 activeEngine = null
                 activeConfig = null
             }
-
-            return result
+            }
         }
+        if (staleStart && result.isSuccess) engine.stop()
+        return result
     }
 
     /**
@@ -123,6 +142,7 @@ class NativeEngineController(
         stopStatsPolling()
         val engine: IVpnEngine?
         synchronized(lock) {
+            sessionGeneration.incrementAndGet()
             engine = activeEngine
             activeEngine = null
             activeConfig = null
