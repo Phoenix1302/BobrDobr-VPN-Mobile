@@ -34,16 +34,18 @@ class NativeEngineController(
     private val lock = Any()
 
     private val statusListener = JniBridge.StatusListener { statusCode, message ->
+        val currentProtocol: VpnProtocol
+        val currentServer: String?
         synchronized(lock) {
-            if (activeEngine == null && statusCode == JniBridge.STATUS_DISCONNECTED) {
-                DebugLogger.d(TAG, "Ignoring STATUS_DISCONNECTED callback from decommissioned/stopped engine")
+            if (activeEngine == null) {
+                DebugLogger.d(TAG, "Ignoring callback code=$statusCode ($message) from decommissioned/stopped engine")
                 return@StatusListener
             }
+            currentProtocol = activeConfig?.protocol ?: VpnProtocol.AMNEZIA_WG
+            currentServer = activeConfig?.serverName
         }
         val statusName = JniBridge.statusToString(statusCode)
         DebugLogger.i(TAG, "Native status update callback: code=$statusCode ($statusName), message='$message'")
-        val currentProtocol = activeConfig?.protocol ?: VpnProtocol.AMNEZIA_WG
-        val currentServer = activeConfig?.serverName
 
         val newState = when (statusCode) {
             JniBridge.STATUS_DISCONNECTED -> VpnState.Disconnected
@@ -74,52 +76,60 @@ class NativeEngineController(
         tunFd: Int,
         protector: SocketProtector,
         tunConfigCallback: JniBridge.TunConfigCallback? = null
-    ): Result<Unit> = synchronized(lock) {
+    ): Result<Unit> {
         DebugLogger.i(TAG, "startTunnel requested: protocol=${config.protocol.displayName}, server='${config.serverName}', tunFd=$tunFd")
 
-        // Stop any currently running engine
+        // Stop any currently running engine first WITHOUT holding lock to prevent deadlocks
         stopInternal()
 
-        activeConfig = config
-        val engine: IVpnEngine = when (config.protocol) {
-            VpnProtocol.AMNEZIA_WG, VpnProtocol.WIREGUARD -> {
-                DebugLogger.i(TAG, "Instantiating RustVpnEngine for ${config.protocol.displayName}")
-                RustVpnEngine(statusListener)
+        synchronized(lock) {
+            activeConfig = config
+            val engine: IVpnEngine = when (config.protocol) {
+                VpnProtocol.AMNEZIA_WG, VpnProtocol.WIREGUARD -> {
+                    DebugLogger.i(TAG, "Instantiating RustVpnEngine for ${config.protocol.displayName}")
+                    RustVpnEngine(statusListener)
+                }
+                VpnProtocol.OPENCONNECT -> {
+                    DebugLogger.i(TAG, "Instantiating GoVpnEngine for ${config.protocol.displayName}")
+                    GoVpnEngine(statusListener)
+                }
             }
-            VpnProtocol.OPENCONNECT -> {
-                DebugLogger.i(TAG, "Instantiating GoVpnEngine for ${config.protocol.displayName}")
-                GoVpnEngine(statusListener)
+
+            activeEngine = engine
+
+            val result = engine.start(tunFd, config.rawConfigJson, protector, tunConfigCallback)
+            if (result.isSuccess) {
+                DebugLogger.i(TAG, "Native engine started successfully. Commencing stats polling.")
+                startStatsPolling()
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "Unknown engine start failure"
+                DebugLogger.e(TAG, "Failed to start native engine: $err", result.exceptionOrNull())
+                activeEngine = null
+                activeConfig = null
             }
+
+            return result
         }
-
-        activeEngine = engine
-
-        val result = engine.start(tunFd, config.rawConfigJson, protector, tunConfigCallback)
-        if (result.isSuccess) {
-            DebugLogger.i(TAG, "Native engine started successfully. Commencing stats polling.")
-            startStatsPolling()
-        } else {
-            val err = result.exceptionOrNull()?.message ?: "Unknown engine start failure"
-            DebugLogger.e(TAG, "Failed to start native engine: $err", result.exceptionOrNull())
-            activeEngine = null
-        }
-
-        return result
     }
 
     /**
      * Gracefully stops the active native tunnel and ends telemetry collection.
      */
-    fun stopTunnel(): Result<Unit> = synchronized(lock) {
+    fun stopTunnel(): Result<Unit> {
         return stopInternal()
     }
 
     private fun stopInternal(): Result<Unit> {
         stopStatsPolling()
-        val engine = activeEngine ?: return Result.success(Unit)
+        val engine: IVpnEngine?
+        synchronized(lock) {
+            engine = activeEngine
+            activeEngine = null
+            activeConfig = null
+        }
+        if (engine == null) return Result.success(Unit)
         DebugLogger.i(TAG, "Stopping active engine (${engine::class.java.simpleName})...")
-        activeEngine = null
-        activeConfig = null
+        // Calling engine.stop() OUTSIDE synchronized(lock) avoids deadlocks with worker thread callbacks
         val res = engine.stop()
         return res
     }

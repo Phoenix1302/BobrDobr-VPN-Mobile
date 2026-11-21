@@ -366,8 +366,11 @@ fn run_packet_loop(
     }
 
     unsafe { libc::close(shutdown_read_fd) };
-    is_running.store(false, Ordering::SeqCst);
-    notify_status(status_cb, STATUS_DISCONNECTED, "AmneziaWG tunnel disconnected");
+    let was_running = is_running.swap(false, Ordering::SeqCst);
+    if was_running {
+        // Only notify if not already stopped via intentional stop()
+        notify_status(status_cb, STATUS_DISCONNECTED, "AmneziaWG tunnel disconnected");
+    }
     log_info!("Packet loop terminated cleanly");
 }
 

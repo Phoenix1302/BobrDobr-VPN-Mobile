@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -156,9 +157,9 @@ fun DashboardScreen(
     var beaverCenter by remember { mutableStateOf(Offset.Zero) }
 
     val activeParticles = remember { mutableStateListOf<EasterParticleData>() }
-    var showBigPoop by remember { mutableStateOf(false) }
-    var easterToastText by remember { mutableStateOf<String?>(null) }
-    var toastJob by remember { mutableStateOf<Job?>(null) }
+    var bigPopup by remember { mutableStateOf<BigEmojiPopupData?>(null) }
+    var easterBanner by remember { mutableStateOf<EasterBannerData?>(null) }
+    var bannerJob by remember { mutableStateOf<Job?>(null) }
 
     fun triggerPoopExplosion() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -168,13 +169,19 @@ fun DashboardScreen(
                 animationSpec = tween(500, easing = FastOutSlowInEasing)
             )
         }
-        showBigPoop = true
+        bigPopup = BigEmojiPopupData(System.nanoTime(), "💩")
 
-        toastJob?.cancel()
-        easterToastText = "Чистейший речной трафик! 🌊"
-        toastJob = coroutineScope.launch {
+        bannerJob?.cancel()
+        easterBanner = EasterBannerData(
+            title = "Бобр одобряет! 🦫",
+            subtitle = "Чистейший речной трафик! 🌊",
+            emoji = "💩",
+            glowColor = NeonAmber,
+            borderColor = NeonAmber
+        )
+        bannerJob = coroutineScope.launch {
             delay(3200)
-            easterToastText = null
+            easterBanner = null
         }
 
         val originX = if (beaverCenter.x > 0f) beaverCenter.x else 500f
@@ -201,9 +208,55 @@ fun DashboardScreen(
         activeParticles.addAll(burstParticles)
     }
 
+    fun triggerHeartExplosion() {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        coroutineScope.launch {
+            beaverScale.animateTo(1.4f, spring(dampingRatio = 0.35f, stiffness = 600f))
+            beaverScale.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 400f))
+        }
+        bigPopup = BigEmojiPopupData(System.nanoTime(), "💖")
+
+        bannerJob?.cancel()
+        easterBanner = EasterBannerData(
+            title = "Бобр любит вас! 🦫",
+            subtitle = "Самый чистый и быстрый интернет! 💖",
+            emoji = "💖",
+            glowColor = Color(0xFFFF4081),
+            borderColor = Color(0xFFFF4081)
+        )
+        bannerJob = coroutineScope.launch {
+            delay(3200)
+            easterBanner = null
+        }
+
+        val originX = if (beaverCenter.x > 0f) beaverCenter.x else 500f
+        val originY = if (beaverCenter.y > 0f) beaverCenter.y else 150f
+
+        val loveEmojis = listOf("❤️", "💖", "💕", "💝", "✨", "🥰", "🪵", "⚡")
+        val burstParticles = (0 until 24).map { i ->
+            val angle = (i * (360.0 / 24.0) + Random.nextDouble(-12.0, 12.0)) * Math.PI / 180.0
+            val speed = Random.nextFloat() * 400f + 300f
+            EasterParticleData(
+                id = System.nanoTime() + i,
+                emoji = loveEmojis.random(),
+                startX = originX,
+                startY = originY,
+                velocityX = (cos(angle) * speed).toFloat(),
+                velocityY = (sin(angle) * speed - 180f).toFloat(),
+                gravity = Random.nextFloat() * 300f + 400f,
+                startScale = Random.nextFloat() * 0.4f + 0.9f,
+                endScale = Random.nextFloat() * 0.3f + 0.7f,
+                startRotation = Random.nextFloat() * 360f,
+                rotationDelta = Random.nextFloat() * 480f - 240f,
+                durationMs = Random.nextInt(1500, 2200)
+            )
+        }
+        activeParticles.addAll(burstParticles)
+    }
+
     fun handleBeaverTap() {
         coroutineScope.launch {
-            beaverScale.animateTo(1.35f, spring(dampingRatio = 0.35f, stiffness = 700f))
+            beaverScale.animateTo(1.3f, spring(dampingRatio = 0.35f, stiffness = 700f))
             beaverScale.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 500f))
         }
 
@@ -216,7 +269,7 @@ fun DashboardScreen(
 
         if (tapCount >= 7) {
             tapCount = 0
-            triggerPoopExplosion()
+            triggerHeartExplosion()
         } else {
             val originX = if (beaverCenter.x > 0f) beaverCenter.x else 500f
             val originY = if (beaverCenter.y > 0f) beaverCenter.y else 150f
@@ -239,11 +292,6 @@ fun DashboardScreen(
             }
             activeParticles.addAll(newParticles)
         }
-    }
-
-    fun handleBeaverLongPress() {
-        tapCount = 0
-        triggerPoopExplosion()
     }
 
     Box(
@@ -278,8 +326,18 @@ fun DashboardScreen(
                         }
                         .pointerInput(Unit) {
                             detectTapGestures(
-                                onTap = { handleBeaverTap() },
-                                onLongPress = { handleBeaverLongPress() }
+                                onPress = {
+                                    val holdJob = coroutineScope.launch {
+                                        delay(400)
+                                        while (isActive) {
+                                            triggerPoopExplosion()
+                                            delay(1500)
+                                        }
+                                    }
+                                    tryAwaitRelease()
+                                    holdJob.cancel()
+                                },
+                                onTap = { handleBeaverTap() }
                             )
                         },
                     contentAlignment = Alignment.Center
@@ -408,46 +466,47 @@ fun DashboardScreen(
         }
     }
 
-    // Easter Egg Big Poop Animated Popup
-    BigPoopOverlay(
-        visible = showBigPoop,
-        onFinished = { showBigPoop = false }
+    // Easter Egg Big Emoji Animated Popup (Heart or Poop)
+    BigEmojiOverlay(
+        popup = bigPopup,
+        onFinished = { bigPopup = null }
     )
 
     // Easter Egg Cyber Toast / Banner
     AnimatedVisibility(
-        visible = easterToastText != null,
+        visible = easterBanner != null,
         enter = fadeIn(tween(250)) + slideInVertically(initialOffsetY = { -it }),
         exit = fadeOut(tween(300)) + slideOutVertically(targetOffsetY = { -it }),
         modifier = Modifier
             .align(Alignment.TopCenter)
             .padding(top = 18.dp, start = 20.dp, end = 20.dp)
     ) {
+        val banner = easterBanner ?: return@AnimatedVisibility
         Surface(
             color = Color(0xFF1E1812),
             shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, NeonAmber),
+            border = BorderStroke(1.dp, banner.borderColor),
             shadowElevation = 10.dp,
-            modifier = Modifier.neonGlow(NeonAmber, radius = 12.dp, alpha = 0.45f)
+            modifier = Modifier.neonGlow(banner.glowColor, radius = 12.dp, alpha = 0.45f)
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "💩",
+                    text = banner.emoji,
                     fontSize = 26.sp
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
-                        text = "Бобр одобряет! 🦫",
-                        color = NeonAmber,
+                        text = banner.title,
+                        color = banner.glowColor,
                         fontWeight = FontWeight.Black,
                         fontSize = 14.sp
                     )
                     Text(
-                        text = easterToastText ?: "",
+                        text = banner.subtitle,
                         color = TextSecondary,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
@@ -712,18 +771,31 @@ private fun EasterParticleItem(
     )
 }
 
+private data class BigEmojiPopupData(
+    val id: Long,
+    val emoji: String
+)
+
+private data class EasterBannerData(
+    val title: String,
+    val subtitle: String,
+    val emoji: String,
+    val glowColor: Color,
+    val borderColor: Color
+)
+
 @Composable
-private fun BigPoopOverlay(
-    visible: Boolean,
+private fun BigEmojiOverlay(
+    popup: BigEmojiPopupData?,
     onFinished: () -> Unit
 ) {
-    if (!visible) return
+    if (popup == null) return
 
-    val scale = remember { Animatable(0.2f) }
-    val alpha = remember { Animatable(1f) }
-    val rotation = remember { Animatable(-25f) }
+    val scale = remember(popup.id) { Animatable(0.2f) }
+    val alpha = remember(popup.id) { Animatable(1f) }
+    val rotation = remember(popup.id) { Animatable(-25f) }
 
-    LaunchedEffect(visible) {
+    LaunchedEffect(popup.id) {
         launch {
             scale.animateTo(
                 targetValue = 2.8f,
@@ -749,7 +821,7 @@ private fun BigPoopOverlay(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "💩",
+            text = popup.emoji,
             fontSize = 90.sp,
             modifier = Modifier.graphicsLayer {
                 scaleX = scale.value
