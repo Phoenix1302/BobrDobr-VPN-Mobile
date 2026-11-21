@@ -86,6 +86,7 @@ fun SubscriptionScreen(
     val context = LocalContext.current
     val subManager = remember { SubscriptionManager.getInstance(context) }
     val subInfo by subManager.subscriptionInfo.collectAsStateWithLifecycle()
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
     val isSubscribing by viewModel.isSubscribing.collectAsStateWithLifecycle()
     val subscriptionMessage by viewModel.subscriptionMessage.collectAsStateWithLifecycle()
 
@@ -142,9 +143,18 @@ fun SubscriptionScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         if (subInfo.hasSubscription) {
+            val subServersCount = remember(subInfo.profiles, servers) {
+                if (subInfo.profiles.isNotEmpty()) {
+                    subInfo.profiles.size
+                } else {
+                    servers.count { it.isFromSubscription }
+                }
+            }
+
             // STATE 1: ACTIVE SUBSCRIPTION
             ActiveSubscriptionCard(
                 subInfo = subInfo,
+                subServersCount = subServersCount,
                 onOpenCabinet = {
                     val target = if (subInfo.cabinetUrl.isNotBlank()) {
                         subInfo.cabinetUrl
@@ -228,6 +238,7 @@ fun SubscriptionScreen(
 @Composable
 private fun ActiveSubscriptionCard(
     subInfo: com.bobrdobr.vpn.subscription.SubscriptionInfo,
+    subServersCount: Int,
     onOpenCabinet: () -> Unit,
     onRefresh: () -> Unit,
     onDisconnect: () -> Unit,
@@ -300,7 +311,8 @@ private fun ActiveSubscriptionCard(
             }
             SubscriptionDetailRow(label = "Действует до:", value = subInfo.formattedExpirationDate)
             SubscriptionDetailRow(label = "Остаток срока:", value = subInfo.formattedDaysLeft)
-            SubscriptionDetailRow(label = "Шлюзов в подписке:", value = "${subInfo.profiles.size} (AWG + OpenConnect)")
+
+            SubscriptionDetailRow(label = "Шлюзов в подписке:", value = "$subServersCount (AWG + OpenConnect)")
 
             if (statusMessage.isNotBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))

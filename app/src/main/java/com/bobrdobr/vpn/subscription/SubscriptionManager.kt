@@ -274,6 +274,8 @@ class SubscriptionManager private constructor(private val context: Context) {
             0
         }
 
+        val cachedProfiles = serverRepository.getSubscriptionServers().map { it.toSubscriptionProfile() }
+
         return SubscriptionInfo(
             hasSubscription = true,
             url = url,
@@ -287,6 +289,7 @@ class SubscriptionManager private constructor(private val context: Context) {
             daysLeft = daysLeft,
             isFrozen = isFrozen,
             isActive = (status == SubscriptionStatus.ACTIVE || status == SubscriptionStatus.EXPIRING) && isFrozen == 0,
+            profiles = cachedProfiles,
             lastSyncTime = lastSync
         )
     }

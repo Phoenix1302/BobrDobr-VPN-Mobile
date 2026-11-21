@@ -81,6 +81,29 @@ data class SubscriptionProfile(
     }
 }
 
+fun ServerProfile.toSubscriptionProfile(): SubscriptionProfile {
+    return SubscriptionProfile(
+        id = id,
+        name = name,
+        protocol = protocol,
+        serverAddress = serverAddress,
+        serverPort = serverPort,
+        location = location,
+        countryCode = countryCode,
+        flagEmoji = flagEmoji,
+        pingMs = pingMs,
+        loadPercent = loadPercent,
+        isRecommended = isRecommended,
+        dnsServers = dnsServers,
+        configText = configText,
+        username = username,
+        password = password,
+        group = group,
+        secret = secret,
+        rawConfigJson = rawConfigJson ?: "{}"
+    )
+}
+
 /**
  * Holds complete metadata, account state, and profiles from subscription provider.
  */

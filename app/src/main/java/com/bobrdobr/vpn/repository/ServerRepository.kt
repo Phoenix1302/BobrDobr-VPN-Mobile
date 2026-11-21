@@ -129,6 +129,13 @@ class ServerRepository private constructor(context: Context) {
         recomputeServersList()
     }
 
+    /**
+     * Returns an immutable copy of currently cached subscription servers.
+     */
+    fun getSubscriptionServers(): List<ServerProfile> {
+        return _subscriptionServers.toList()
+    }
+
     private fun saveCustomServers() {
         val arr = JSONArray()
         for (s in _customServers) {

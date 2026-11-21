@@ -545,28 +545,51 @@ private fun DesktopServerCard(
                     }
                 }
 
-                if (server.pingMs > 0) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(pingColor.copy(alpha = 0.12f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Box(
+                // Right: Ping (if > 0) + Sleek Settings Button
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (server.pingMs > 0) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(pingColor)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "${server.pingMs} мс",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = pingColor,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 10.sp
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(pingColor.copy(alpha = 0.12f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(pingColor)
                             )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "${server.pingMs} мс",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = pingColor,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp
+                                )
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(protocolBaseColor.copy(alpha = 0.12f))
+                            .border(1.dp, protocolBaseColor.copy(alpha = 0.35f), CircleShape)
+                            .clickable { onInspectClick() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Параметры подключения",
+                            tint = protocolBaseColor,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -590,7 +613,7 @@ private fun DesktopServerCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Row 3: Status Indicator + Direct Actions [ Settings ] & [ Подключить ] / [ Отключить ]
+            // Row 3: Status Indicator + Direct Action Button [ Подключить ] / [ Отключить ]
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -629,63 +652,42 @@ private fun DesktopServerCard(
                     )
                 }
 
-                // Right: Inspect Settings button + Action button
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    IconButton(
-                        onClick = onInspectClick,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(BackgroundInput)
-                            .border(1.dp, CardBorder, RoundedCornerShape(8.dp))
+                // Right: Action button
+                if (isActiveConnected) {
+                    Button(
+                        onClick = onDisconnectClick,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NeonRed.copy(alpha = 0.15f),
+                            contentColor = NeonRed
+                        ),
+                        border = BorderStroke(1.dp, NeonRed),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Параметры подключения",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(17.dp)
+                        Text(
+                            text = "Отключить",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
-
-                    if (isActiveConnected) {
-                        Button(
-                            onClick = onDisconnectClick,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = NeonRed.copy(alpha = 0.15f),
-                                contentColor = NeonRed
-                            ),
-                            border = BorderStroke(1.dp, NeonRed),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                        ) {
-                            Text(
-                                text = "Отключить",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    } else {
-                        Button(
-                            onClick = onConnectClick,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = NeonEmerald.copy(alpha = 0.15f),
-                                contentColor = NeonEmerald
-                            ),
-                            border = BorderStroke(1.dp, NeonEmerald),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                        ) {
-                            Text(
-                                text = "Подключить",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                } else {
+                    Button(
+                        onClick = onConnectClick,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NeonEmerald.copy(alpha = 0.15f),
+                            contentColor = NeonEmerald
+                        ),
+                        border = BorderStroke(1.dp, NeonEmerald),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            text = "Подключить",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
