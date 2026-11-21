@@ -147,6 +147,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
     private var watchdogJob: Job? = null
     private var lastMeasuredPingMs: Long = 0L
     private var lastNotifiedState: VpnState? = null
+    private var activeAssignedIpv4: String? = null
+    private var activeAssignedPrefix: Int = 24
 
     override fun onCreate() {
         super.onCreate()
@@ -326,6 +328,9 @@ class VpnTunnelService : VpnService(), SocketProtector {
             val ipv4Prefix = json.optInt("ipv4_prefix", config.ipv4Prefix)
             val mtu = json.optInt("mtu", config.mtu).coerceIn(1280, 1500)
 
+            activeAssignedIpv4 = ipv4
+            activeAssignedPrefix = ipv4Prefix
+
             val dynamicDns = mutableListOf<String>()
             val dnsArray = json.optJSONArray("dns")
             if (dnsArray != null) {
@@ -335,6 +340,15 @@ class VpnTunnelService : VpnService(), SocketProtector {
                 }
             }
             val effectiveDns = if (dynamicDns.isNotEmpty()) dynamicDns else config.dnsServers.ifEmpty { listOf("1.1.1.1") }
+
+            // Update activeConfig with dynamically negotiated parameters from CSTP
+            val updatedConfig = config.copy(
+                ipv4Address = ipv4,
+                ipv4Prefix = ipv4Prefix,
+                dnsServers = effectiveDns,
+                mtu = mtu
+            )
+            activeConfig = updatedConfig
 
             val splitInclude = mutableListOf<CidrRoute>()
             val incArray = json.optJSONArray("split_include")
@@ -406,6 +420,15 @@ class VpnTunnelService : VpnService(), SocketProtector {
                     } catch (_: Exception) {}
                 }
 
+                // Explicit /32 host route for calculated in-tunnel gateway
+                try {
+                    val gw = calculateInTunnelGatewayIp(ipv4, ipv4Prefix)
+                    addRoute(gw, 32)
+                    DebugLogger.d(TAG, "Added explicit /32 route for in-tunnel gateway: $gw")
+                } catch (e: Exception) {
+                    DebugLogger.w(TAG, "Failed to add explicit route for gateway: ${e.message}")
+                }
+
                 for (pkg in config.allowedApplications) {
                     try { addAllowedApplication(pkg) } catch (_: Exception) {}
                 }
@@ -421,6 +444,9 @@ class VpnTunnelService : VpnService(), SocketProtector {
             val rawFd = pfd.detachFd()
             activeTunRawFd.set(rawFd)
             DebugLogger.i(TAG, "Dynamic TUN established successfully. Detached fd=$rawFd")
+            if (_vpnState.value is VpnState.Connected) {
+                startPingMonitor(updatedConfig)
+            }
             rawFd
         } catch (e: Exception) {
             DebugLogger.e(TAG, "Failed to establish dynamic TUN: ${e.message}", e)
@@ -557,6 +583,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
         activeConfig = effectiveConfig
         _currentConfig = effectiveConfig
+        activeAssignedIpv4 = effectiveConfig.ipv4Address
+        activeAssignedPrefix = effectiveConfig.ipv4Prefix
 
         closeTunResources()
 
@@ -631,6 +659,15 @@ class VpnTunnelService : VpnService(), SocketProtector {
                             addRoute(dns, 128)
                         }
                     } catch (_: Exception) {}
+                }
+
+                // Explicit /32 host route for calculated in-tunnel gateway
+                try {
+                    val gw = calculateInTunnelGatewayIp(effectiveConfig.ipv4Address, effectiveConfig.ipv4Prefix)
+                    addRoute(gw, 32)
+                    DebugLogger.d(TAG, "Added explicit /32 route for in-tunnel gateway: $gw")
+                } catch (e: Exception) {
+                    DebugLogger.w(TAG, "Failed to add explicit route for gateway: ${e.message}")
                 }
 
                 for (pkg in effectiveConfig.allowedApplications) {
@@ -861,15 +898,47 @@ class VpnTunnelService : VpnService(), SocketProtector {
         super.onDestroy()
     }
 
+    /**
+     * Dynamically calculates the in-tunnel gateway IP address from the assigned client IP
+     * and subnet prefix, without any hardcoded addresses.
+     *
+     * In standard VPN topologies (/24 to /30 subnets), the server gateway is the first usable host (.1).
+     * For /32 point-to-point client addresses (common in WireGuard client peer configurations),
+     * it derives the .1 host of the parent /24 network.
+     */
+    private fun calculateInTunnelGatewayIp(clientIp: String, prefix: Int): String {
+        try {
+            val parts = clientIp.trim().split(".")
+            if (parts.size == 4) {
+                val octets = parts.map { it.toInt() }
+                if (octets.all { it in 0..255 }) {
+                    if (prefix in 1..30) {
+                        val ipInt = (octets[0] shl 24) or (octets[1] shl 16) or (octets[2] shl 8) or octets[3]
+                        val mask = (-1L shl (32 - prefix)).toInt()
+                        val netInt = ipInt and mask
+                        val gwInt = netInt or 1
+                        val gwIp = "${(gwInt ushr 24) and 0xFF}.${(gwInt ushr 16) and 0xFF}.${(gwInt ushr 8) and 0xFF}.${gwInt and 0xFF}"
+                        return gwIp
+                    } else {
+                        // Point-to-point /32 or fallback to /24 .1 host
+                        return "${octets[0]}.${octets[1]}.${octets[2]}.1"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            DebugLogger.w(TAG, "Error calculating in-tunnel gateway IP for $clientIp/$prefix: ${e.message}")
+        }
+        return "10.8.0.1"
+    }
+
     private fun startPingMonitor(config: TunnelConfig) {
         stopPingMonitor()
         pingMonitorJob = serviceScope.launch(Dispatchers.IO) {
-            val gatewayIp = config.dnsServers.firstOrNull() ?: run {
-                val parts = config.ipv4Address.split(".")
-                if (parts.size == 4) "${parts[0]}.${parts[1]}.${parts[2]}.1" else "10.8.0.1"
-            }
+            val clientIp = activeAssignedIpv4 ?: config.ipv4Address
+            val prefix = if (activeAssignedPrefix in 1..32) activeAssignedPrefix else config.ipv4Prefix
+            val gatewayIp = calculateInTunnelGatewayIp(clientIp, prefix)
 
-            DebugLogger.i(TAG, "Starting In-Tunnel gateway ping monitor to $gatewayIp (3s interval)")
+            DebugLogger.i(TAG, "Starting In-Tunnel gateway ping monitor to calculated gateway $gatewayIp (client: $clientIp/$prefix, 3s interval)")
 
             while (isActive) {
                 delay(3000L)
@@ -883,7 +952,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
                 val startTime = SystemClock.elapsedRealtime()
                 var rtt = -1L
 
-                // 1. Fast UDP DNS query to gateway
+                // 1. Fast UDP DNS query to in-tunnel gateway (port 53)
                 try {
                     java.net.DatagramSocket().use { ds ->
                         ds.soTimeout = 800
@@ -905,17 +974,32 @@ class VpnTunnelService : VpnService(), SocketProtector {
                     }
                 } catch (_: Exception) {}
 
-                // 2. Fallback to TCP SYN/RST probe
+                // 2. Fallback to TCP SYN/RST probe on ports 53 and 443
+                if (rtt <= 0) {
+                    for (port in intArrayOf(53, 443)) {
+                        try {
+                            val tcpStart = SystemClock.elapsedRealtime()
+                            Socket().use { s ->
+                                s.soTimeout = 600
+                                s.connect(InetSocketAddress(gatewayIp, port), 600)
+                                rtt = SystemClock.elapsedRealtime() - tcpStart
+                            }
+                            if (rtt > 0) break
+                        } catch (e: java.net.ConnectException) {
+                            // RST packet received from gateway proves the packet reached the in-tunnel gateway!
+                            rtt = SystemClock.elapsedRealtime() - startTime
+                            break
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                // 3. Fallback to ICMP isReachable
                 if (rtt <= 0) {
                     try {
-                        val tcpStart = SystemClock.elapsedRealtime()
-                        Socket().use { s ->
-                            s.soTimeout = 800
-                            s.connect(InetSocketAddress(gatewayIp, 53), 800)
-                            rtt = SystemClock.elapsedRealtime() - tcpStart
+                        val icmpStart = SystemClock.elapsedRealtime()
+                        if (InetAddress.getByName(gatewayIp).isReachable(800)) {
+                            rtt = SystemClock.elapsedRealtime() - icmpStart
                         }
-                    } catch (e: java.net.ConnectException) {
-                        rtt = SystemClock.elapsedRealtime() - startTime
                     } catch (_: Exception) {}
                 }
 

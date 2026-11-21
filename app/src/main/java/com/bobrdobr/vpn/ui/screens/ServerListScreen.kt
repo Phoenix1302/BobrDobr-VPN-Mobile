@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
@@ -76,6 +78,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -704,6 +708,12 @@ private fun ServerDetailsDialog(
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
 
+    val (protocolIcon, protocolColor) = when (server.protocol) {
+        VpnProtocol.AMNEZIA_WG -> Pair(R.drawable.ic_amnezia, NeonAmber)
+        VpnProtocol.WIREGUARD -> Pair(R.drawable.ic_amnezia, NeonCyan)
+        VpnProtocol.OPENCONNECT -> Pair(R.drawable.ic_openconnect, NeonCyan)
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -716,15 +726,9 @@ private fun ServerDetailsDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    val (protocolIcon, protocolColor) = when (server.protocol) {
-                        VpnProtocol.AMNEZIA_WG -> Pair(R.drawable.ic_amnezia, NeonAmber)
-                        VpnProtocol.WIREGUARD -> Pair(R.drawable.ic_amnezia, NeonCyan)
-                        VpnProtocol.OPENCONNECT -> Pair(R.drawable.ic_openconnect, NeonCyan)
-                    }
-
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
                             .background(protocolColor.copy(alpha = 0.15f))
                             .border(1.dp, protocolColor.copy(alpha = 0.4f), CircleShape),
@@ -739,25 +743,43 @@ private fun ServerDetailsDialog(
 
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = server.name,
                             color = TextPrimary,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        if (server.isFromSubscription) {
-                            DesktopTag(label = "ПОДПИСКА (ТОЛЬКО ЧТЕНИЕ)", color = NeonPurple)
-                        } else if (server.isCustom) {
-                            DesktopTag(label = "ПОЛЬЗОВАТЕЛЬСКОЕ", color = NeonAmber)
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (server.isFromSubscription) {
+                                DesktopTag(label = "подписка", color = NeonPurple)
+                                DesktopTag(label = "только чтение", color = TextSecondary)
+                            } else if (server.isCustom) {
+                                DesktopTag(label = "пользовательский", color = NeonAmber)
+                            }
                         }
                     }
                 }
 
-                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                    Icon(imageVector = Icons.Default.Close, contentDescription = "Закрыть", tint = TextSecondary)
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(BackgroundCardActive.copy(alpha = 0.6f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Закрыть",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(17.dp)
+                    )
                 }
             }
         },
@@ -768,98 +790,127 @@ private fun ServerDetailsDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                ServerInfoRow(label = "Протокол", value = server.protocol.displayName)
-                ServerInfoRow(label = "Адрес шлюза", value = "${server.serverAddress}:${server.serverPort}")
+                // Structured parameters card
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(BackgroundInput)
+                        .border(0.5.dp, CardBorder, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    ServerInfoRow(label = "Протокол", value = server.protocol.displayName)
+                    Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(CardBorder.copy(alpha = 0.4f)))
+                    ServerInfoRow(label = "Адрес шлюза", value = "${server.serverAddress}:${server.serverPort}")
+                    Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(CardBorder.copy(alpha = 0.4f)))
 
-                val dnsText = if (server.dnsServers.isNotEmpty()) {
-                    server.dnsServers.joinToString(", ")
-                } else {
-                    "По умолчанию (1.1.1.1, 1.0.0.1)"
-                }
-                ServerInfoRow(label = "DNS серверы", value = dnsText)
-
-                if (server.protocol == VpnProtocol.OPENCONNECT) {
-                    if (!server.username.isNullOrBlank()) {
-                        ServerInfoRow(label = "Пользователь", value = server.username)
+                    val dnsText = if (server.dnsServers.isNotEmpty()) {
+                        server.dnsServers.joinToString(", ")
+                    } else {
+                        "1.1.1.1, 1.0.0.1"
                     }
-                    if (!server.group.isNullOrBlank()) {
-                        ServerInfoRow(label = "Группа", value = server.group)
+                    ServerInfoRow(label = "DNS серверы", value = dnsText)
+
+                    if (server.protocol == VpnProtocol.OPENCONNECT) {
+                        if (!server.username.isNullOrBlank()) {
+                            Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(CardBorder.copy(alpha = 0.4f)))
+                            ServerInfoRow(label = "Пользователь", value = server.username)
+                        }
+                        if (!server.group.isNullOrBlank()) {
+                            Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(CardBorder.copy(alpha = 0.4f)))
+                            ServerInfoRow(label = "Группа", value = server.group)
+                        }
                     }
                 }
 
                 val config = server.configText
                 if (!config.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text(
-                            text = "Конфигурация",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = TextSecondary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        )
-                        TextButton(
-                            onClick = {
-                                clipboardManager.setText(AnnotatedString(config))
-                                Toast.makeText(context, "Конфигурация скопирована в буфер", Toast.LENGTH_SHORT).show()
-                            },
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = null,
-                                tint = NeonCyan,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Скопировать",
-                                color = NeonCyan,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                text = "Конфигурация",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = TextSecondary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp
+                                )
+                            )
+                            TextButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(config))
+                                    Toast.makeText(context, "Конфигурация скопирована в буфер", Toast.LENGTH_SHORT).show()
+                                },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = null,
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Скопировать",
+                                    color = NeonCyan,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 170.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF070B0E))
+                                .border(0.5.dp, CardBorder, RoundedCornerShape(10.dp))
+                                .verticalScroll(rememberScrollState())
+                                .horizontalScroll(rememberScrollState())
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = config,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.5.sp,
+                                color = TextPrimary,
+                                lineHeight = 15.sp,
+                                softWrap = false
                             )
                         }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 160.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(BackgroundInput)
-                            .border(0.5.dp, CardBorder, RoundedCornerShape(8.dp))
-                            .verticalScroll(rememberScrollState())
-                            .padding(10.dp)
-                    ) {
-                        Text(
-                            text = config,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            color = TextPrimary,
-                            lineHeight = 15.sp
-                        )
                     }
                 }
 
                 if (server.isFromSubscription) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Box(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(10.dp))
                             .background(NeonPurple.copy(alpha = 0.08f))
-                            .border(0.5.dp, NeonPurple.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                            .padding(10.dp)
+                            .border(0.5.dp, NeonPurple.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = NeonPurple,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Параметры этого подключения управляются активной подпиской и защищены от изменений.",
                             style = MaterialTheme.typography.bodySmall.copy(
-                                color = NeonPurple,
-                                fontSize = 11.sp
+                                color = NeonPurple.copy(alpha = 0.9f),
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp
                             )
                         )
                     }
@@ -869,17 +920,20 @@ private fun ServerDetailsDialog(
         confirmButton = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = if (server.isCustom && onDeleteCustom != null) Arrangement.SpaceBetween else Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (server.isCustom && onDeleteCustom != null) {
                     OutlinedButton(
                         onClick = onDeleteCustom,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = NeonRed
                         ),
                         border = BorderStroke(1.dp, NeonRed.copy(alpha = 0.6f)),
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.DeleteOutline,
@@ -887,7 +941,7 @@ private fun ServerDetailsDialog(
                             modifier = Modifier.size(15.dp),
                             tint = NeonRed
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Удалить",
                             fontSize = 12.sp,
@@ -899,14 +953,17 @@ private fun ServerDetailsDialog(
 
                 Button(
                     onClick = onDismiss,
+                    modifier = Modifier
+                        .then(if (server.isCustom && onDeleteCustom != null) Modifier.weight(1f) else Modifier.fillMaxWidth())
+                        .height(42.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = NeonCyan.copy(alpha = 0.15f),
                         contentColor = NeonCyan
                     ),
-                    border = BorderStroke(1.dp, NeonCyan),
-                    shape = RoundedCornerShape(8.dp)
+                    border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.8f)),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text(text = "Закрыть", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(text = "Закрыть", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
         },
@@ -919,7 +976,9 @@ private fun ServerDetailsDialog(
 @Composable
 private fun ServerInfoRow(label: String, value: String) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -927,8 +986,12 @@ private fun ServerInfoRow(label: String, value: String) {
             text = label,
             style = MaterialTheme.typography.bodySmall.copy(
                 color = TextSecondary,
-                fontSize = 12.sp
-            )
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium
+            ),
+            modifier = Modifier.weight(0.38f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
         Text(
             text = value,
@@ -936,9 +999,12 @@ private fun ServerInfoRow(label: String, value: String) {
                 color = TextPrimary,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.End
             ),
-            maxLines = 1
+            modifier = Modifier.weight(0.62f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
