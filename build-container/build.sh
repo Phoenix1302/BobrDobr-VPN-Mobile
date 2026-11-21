@@ -19,6 +19,10 @@ cd /workspace
 # Clean up stale locks from previous container runs if any
 find /workspace/.gradle -name "*.lock" -delete 2>/dev/null || true
 
+# Clean previous APK outputs so alignment verification only tests fresh artifacts
+rm -f app/build/outputs/apk/release/*.apk 2>/dev/null || true
+rm -f app/build/outputs/apk/debug/*.apk 2>/dev/null || true
+
 # If native Rust libraries are missing or rebuild requested, build them
 if [ -f "engine-rust/build-rust.sh" ]; then
     if [ ! -f "engine-rust/src/main/jniLibs/arm64-v8a/libengine_rust.so" ] || [ "${FORCE_REBUILD_NATIVE:-0}" = "1" ]; then
@@ -60,7 +64,7 @@ else
     exit 1
 fi
 
-    for apk in app/build/outputs/apk/release/*.apk app/build/outputs/apk/debug/*.apk; do
+    for apk in $(find app/build/outputs/apk -type f -name "BobrDobr-mobile-*.apk"); do
         if [ -f "$apk" ] && [ -f "build-container/verify-apk-alignment.sh" ]; then
             echo ">>> Found generated APK: $apk"
             chmod +x build-container/verify-apk-alignment.sh

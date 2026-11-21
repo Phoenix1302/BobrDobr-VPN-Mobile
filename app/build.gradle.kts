@@ -16,8 +16,8 @@ android {
         applicationId = "com.bobrdobr.vpn"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 93
-        versionName = "0.8.13-prerelease"
+        versionCode = 94
+        versionName = "0.8.14-prerelease"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -41,9 +41,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = rootProject.file("keystore/release.keystore")
-            storePassword = "bobrdobrvpnrelease"
-            keyAlias = "bobrdobr"
-            keyPassword = "bobrdobrvpnrelease"
+            storePassword = System.getenv("BOBRDOBR_RELEASE_STORE_PASSWORD") ?: "bobrdobrvpnrelease"
+            keyAlias = System.getenv("BOBRDOBR_RELEASE_KEY_ALIAS") ?: "bobrdobr"
+            keyPassword = System.getenv("BOBRDOBR_RELEASE_KEY_PASSWORD") ?: "bobrdobrvpnrelease"
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true

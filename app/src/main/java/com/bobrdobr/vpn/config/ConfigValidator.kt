@@ -136,8 +136,14 @@ object ConfigValidator {
             // Raw IPv6 address without brackets
             Pair(endpoint.trim(), 51820)
         } else {
-            val epParts = endpoint.split(":")
-            Pair(epParts[0].trim(), epParts.getOrNull(1)?.toIntOrNull() ?: 51820)
+            val lastColon = endpoint.lastIndexOf(':')
+            if (lastColon >= 0) {
+                val host = endpoint.substring(0, lastColon).trim()
+                val port = endpoint.substring(lastColon + 1).trim().toIntOrNull() ?: 51820
+                Pair(host, port)
+            } else {
+                Pair(endpoint.trim(), 51820)
+            }
         }
 
         return ValidationResult.SuccessAwg(

@@ -109,7 +109,7 @@ fun SettingsScreen(
         updateManager.manualCheckEvent.collect { result ->
             when (result) {
                 is AppUpdateManager.ManualCheckResult.UpToDate -> {
-                    Toast.makeText(context, "У вас установлена последняя версия (v0.8.13-prerelease)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "У вас установлена последняя версия (v0.8.14-prerelease)", Toast.LENGTH_SHORT).show()
                 }
                 is AppUpdateManager.ManualCheckResult.Available -> {
                     showUpdateDialog = true
@@ -212,9 +212,9 @@ fun SettingsScreen(
             SettingsActionItem(
                 icon = Icons.Default.Info,
                 title = "БобрДобр VPN Mobile",
-                description = "v0.8.13-prerelease (Сборка 93) • Android ARM64 • x86_64",
+                description = "v0.8.14-prerelease (Сборка 94) • Android ARM64 • x86_64",
                 iconColor = NeonCyan,
-                badge = "v0.8.13",
+                badge = "v0.8.14",
                 onClick = {
                     viewModel.setNavigationTab(com.bobrdobr.vpn.ui.viewmodel.NavigationTab.DIAGNOSTICS)
                 }

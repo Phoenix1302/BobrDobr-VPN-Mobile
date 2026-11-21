@@ -7,6 +7,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import org.bobrdobr.vpn.core.logger.DebugLogger
 import org.bobrdobr.vpn.core.model.TunnelConfig
 import org.bobrdobr.vpn.core.model.TunnelStats
@@ -34,6 +36,7 @@ class NativeEngineController(
     private var statsJob: Job? = null
     private val lock = Any()
     private val sessionGeneration = AtomicLong(0)
+    private val lifecycleLock = ReentrantLock()
 
     private fun statusListenerFor(generation: Long) = JniBridge.StatusListener { statusCode, message ->
         val currentProtocol: VpnProtocol
@@ -82,7 +85,7 @@ class NativeEngineController(
         tunFd: Int,
         protector: SocketProtector,
         tunConfigCallback: JniBridge.TunConfigCallback? = null
-    ): Result<Unit> {
+    ): Result<Unit> = lifecycleLock.withLock {
         DebugLogger.i(TAG, "startTunnel requested: protocol=${config.protocol.displayName}, server='${config.serverName}', tunFd=$tunFd")
 
         // Stop any currently running engine first WITHOUT holding lock to prevent deadlocks
@@ -116,26 +119,26 @@ class NativeEngineController(
                 DebugLogger.w(TAG, "Discarding start result from stale engine generation=$generation")
                 staleStart = true
             } else {
-            if (result.isSuccess) {
-                DebugLogger.i(TAG, "Native engine started successfully. Commencing stats polling.")
-                startStatsPolling()
-            } else {
-                val err = result.exceptionOrNull()?.message ?: "Unknown engine start failure"
-                DebugLogger.e(TAG, "Failed to start native engine: $err", result.exceptionOrNull())
-                activeEngine = null
-                activeConfig = null
-            }
+                if (result.isSuccess) {
+                    DebugLogger.i(TAG, "Native engine started successfully. Commencing stats polling.")
+                    startStatsPolling()
+                } else {
+                    val err = result.exceptionOrNull()?.message ?: "Unknown engine start failure"
+                    DebugLogger.e(TAG, "Failed to start native engine: $err", result.exceptionOrNull())
+                    activeEngine = null
+                    activeConfig = null
+                }
             }
         }
         if (staleStart && result.isSuccess) engine.stop()
-        return result
+        return@withLock result
     }
 
     /**
      * Gracefully stops the active native tunnel and ends telemetry collection.
      */
-    fun stopTunnel(): Result<Unit> {
-        return stopInternal()
+    fun stopTunnel(): Result<Unit> = lifecycleLock.withLock {
+        return@withLock stopInternal()
     }
 
     private fun stopInternal(): Result<Unit> {

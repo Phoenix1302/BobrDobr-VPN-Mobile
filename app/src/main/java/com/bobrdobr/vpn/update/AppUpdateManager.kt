@@ -301,14 +301,28 @@ class AppUpdateManager private constructor(private val appContext: Context) {
 
         val assets = root.optJSONArray("assets")
         if (assets != null) {
+            var bestAsset: JSONObject? = null
+            var bestScore = -1
             for (i in 0 until assets.length()) {
-                val asset = assets.getJSONObject(i)
+                val asset = assets.optJSONObject(i) ?: continue
                 val assetName = asset.optString("name", "")
-                if (assetName.endsWith(".apk", ignoreCase = true)) {
-                    downloadUrl = asset.optString("browser_download_url", "")
-                    apkSize = asset.optLong("size", 0L)
-                    break
+                if (!assetName.endsWith(".apk", ignoreCase = true)) continue
+
+                val lower = assetName.lowercase()
+                val score = when {
+                    lower.contains("bobrdobr-mobile") && !lower.contains("debug") -> 4
+                    lower.contains("release") && !lower.contains("debug") -> 3
+                    !lower.contains("debug") -> 2
+                    else -> 1
                 }
+                if (score > bestScore) {
+                    bestScore = score
+                    bestAsset = asset
+                }
+            }
+            if (bestAsset != null) {
+                downloadUrl = bestAsset.optString("browser_download_url", "")
+                apkSize = bestAsset.optLong("size", 0L)
             }
         }
 
