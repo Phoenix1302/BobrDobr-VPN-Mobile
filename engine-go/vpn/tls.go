@@ -1,6 +1,7 @@
 package vpn
 
 import (
+	"bufio"
 	"encoding/binary"
 	"io"
 	"net"
@@ -12,8 +13,8 @@ import (
 	"openconnect-worker/session"
 )
 
-// TlsChannel processes CSTP stream from server over TLS
-func TlsChannel(conn net.Conn, reader io.Reader, cSess *session.ConnSession, resp *http.Response) {
+// TlsChannel processes CSTP stream from server over TLS using the buffered reader
+func TlsChannel(conn net.Conn, bufR *bufio.Reader, cSess *session.ConnSession, resp *http.Response) {
 	defer func() {
 		base.Info("TLS CSTP channel exiting")
 		if resp != nil && resp.Body != nil {
@@ -30,52 +31,64 @@ func TlsChannel(conn net.Conn, reader io.Reader, cSess *session.ConnSession, res
 
 	go PayloadOutTLSToServer(conn, cSess)
 
-	hdrBuf := make([]byte, 8)
-
 	for {
 		if cSess.ResetTLSReadDead.Load() {
 			_ = conn.SetReadDeadline(time.Now().Add(dead))
 			cSess.ResetTLSReadDead.Store(false)
 		}
 
-		// Read 8-byte CSTP header: STF\x01 (4B) + length (2B) + type (1B) + flags (1B)
-		_, err := io.ReadFull(reader, hdrBuf)
+		pl := GetPayloadBuffer()
+		bytesReceived, err := bufR.Read(pl.Data)
 		if err != nil {
+			PutPayloadBuffer(pl)
 			select {
 			case <-cSess.CloseChan:
 				return
 			default:
-				base.Info("TLS CSTP read header error:", err)
+				base.Info("TLS CSTP read error:", err)
 				return
 			}
 		}
 
-		if hdrBuf[0] != 0x53 || hdrBuf[1] != 0x54 || hdrBuf[2] != 0x46 || hdrBuf[3] != 0x01 {
-			base.Warn("Invalid CSTP header magic:", hdrBuf[:4])
-			return
+		if bytesReceived < 8 {
+			base.Warn("TLS CSTP received runt packet:", bytesReceived)
+			PutPayloadBuffer(pl)
+			continue
 		}
 
-		dataLen := binary.BigEndian.Uint16(hdrBuf[4:6])
-		pktType := hdrBuf[6]
-
-		pl := GetPayloadBuffer()
-		if int(dataLen) > cap(pl.Data) {
-			pl.Data = make([]byte, dataLen)
-		} else {
-			pl.Data = pl.Data[:dataLen]
+		if pl.Data[0] != 0x53 || pl.Data[1] != 0x54 || pl.Data[2] != 0x46 || pl.Data[3] != 0x01 {
+			base.Warn("Invalid CSTP header magic:", pl.Data[:4])
+			PutPayloadBuffer(pl)
+			continue
 		}
 
-		if dataLen > 0 {
-			_, err = io.ReadFull(reader, pl.Data)
-			if err != nil {
-				PutPayloadBuffer(pl)
-				base.Info("TLS CSTP read payload error:", err)
-				return
+		dataLen := binary.BigEndian.Uint16(pl.Data[4:6])
+		pktType := pl.Data[6]
+
+		// If the CSTP frame was partially read by bufR, read remainder
+		targetLen := 8 + int(dataLen)
+		if bytesReceived < targetLen {
+			needed := targetLen - bytesReceived
+			if needed > 0 {
+				if cap(pl.Data) < targetLen {
+					newBuf := make([]byte, targetLen)
+					copy(newBuf, pl.Data[:bytesReceived])
+					pl.Data = newBuf
+				}
+				_, rErr := io.ReadFull(bufR, pl.Data[bytesReceived:targetLen])
+				if rErr != nil {
+					base.Error("TLS CSTP read remainder error:", rErr)
+					PutPayloadBuffer(pl)
+					return
+				}
+				bytesReceived = targetLen
 			}
 		}
 
 		switch pktType {
 		case 0x00: // DATA
+			copy(pl.Data, pl.Data[8:8+dataLen])
+			pl.Data = pl.Data[:dataLen]
 			pl.Type = 0x00
 			select {
 			case cSess.PayloadIn <- pl:
@@ -108,7 +121,7 @@ func TlsChannel(conn net.Conn, reader io.Reader, cSess *session.ConnSession, res
 	}
 }
 
-// PayloadOutTLSToServer transmits queued packets from TUN to server over TLS
+// PayloadOutTLSToServer transmits queued packets from TUN to server over TLS in atomic single-record frames
 func PayloadOutTLSToServer(conn net.Conn, cSess *session.ConnSession) {
 	defer func() {
 		base.Info("TLS payloadOut to server exiting")
@@ -116,9 +129,6 @@ func PayloadOutTLSToServer(conn net.Conn, cSess *session.ConnSession) {
 		_ = conn.Close()
 		cSess.Close()
 	}()
-
-	hdr := make([]byte, 8)
-	copy(hdr[:4], proto.Header[:4])
 
 	for {
 		var pl *proto.Payload
@@ -133,33 +143,42 @@ func PayloadOutTLSToServer(conn net.Conn, cSess *session.ConnSession) {
 		}
 
 		l := len(pl.Data)
-		binary.BigEndian.PutUint16(hdr[4:6], uint16(l))
-		hdr[6] = pl.Type
-		hdr[7] = 0x00
+		var writeBuf []byte
+		if pl.Type == 0x00 {
+			// Prepend 8-byte CSTP header into a single buffer so GnuTLS / ocserv receives
+			// the header and packet in a single TLS application data record.
+			if cap(pl.Data) >= l+8 && len(pl.Data) > 0 {
+				writeBuf = pl.Data[:l+8]
+				copy(writeBuf[8:], pl.Data[:l])
+			} else {
+				writeBuf = make([]byte, l+8)
+				copy(writeBuf[8:], pl.Data)
+			}
+			copy(writeBuf[:4], proto.Header[:4])
+			binary.BigEndian.PutUint16(writeBuf[4:6], uint16(l))
+			writeBuf[6] = 0x00
+			writeBuf[7] = 0x00
+		} else {
+			writeBuf = make([]byte, 8+len(pl.Data))
+			copy(writeBuf[:4], proto.Header[:4])
+			binary.BigEndian.PutUint16(writeBuf[4:6], uint16(len(pl.Data)))
+			writeBuf[6] = pl.Type
+			writeBuf[7] = 0x00
+			if len(pl.Data) > 0 {
+				copy(writeBuf[8:], pl.Data)
+			}
+		}
 
 		cSess.WriteMu.Lock()
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		// Write 8-byte header
-		_, err := conn.Write(hdr)
+		bytesSent, err := conn.Write(writeBuf)
+		cSess.WriteMu.Unlock()
+		PutPayloadBuffer(pl)
+
 		if err != nil {
-			cSess.WriteMu.Unlock()
-			PutPayloadBuffer(pl)
-			base.Error("TLS write header error:", err)
+			base.Error("TLS write error:", err)
 			return
 		}
-
-		// Write payload if present
-		if l > 0 {
-			_, err = conn.Write(pl.Data)
-			if err != nil {
-				cSess.WriteMu.Unlock()
-				PutPayloadBuffer(pl)
-				base.Error("TLS write payload error:", err)
-				return
-			}
-		}
-		cSess.WriteMu.Unlock()
-
-		PutPayloadBuffer(pl)
+		_ = bytesSent
 	}
 }

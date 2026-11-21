@@ -194,11 +194,8 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 
 	base.Info("CSTP tunnel established: Server IP", cSess.ServerAddress, "VPN Address", cSess.VPNAddress, "MTU", cSess.MTU)
 
-	// Launch TLS transport loop in background.  For a successful CONNECT
-	// response net/http owns the bytes that follow the response headers through
-	// resp.Body.  Reading auth.BufR directly bypasses that body wrapper and can
-	// lose buffered CSTP bytes or race with its close handling.
-	go TlsChannel(auth.Conn, resp.Body, cSess, resp)
+	// Launch TLS transport loop in background using the authenticated buffered reader
+	go TlsChannel(auth.Conn, auth.BufR, cSess, resp)
 
 	// Launch secondary DTLS UDP transport if enabled and server supports it
 	if !base.Cfg.NoDTLS && cSess.DTLSPort != "" {
