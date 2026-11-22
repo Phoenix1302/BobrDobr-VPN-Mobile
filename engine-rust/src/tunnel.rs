@@ -310,6 +310,10 @@ fn run_packet_loop(
                 match tun_dev.read(&mut tun_buf) {
                     Ok(n) if n > 0 => {
                         if let Some(ref mut kp) = session.current_keypair {
+                            if kp.is_expired(now) {
+                                log_debug!("Keypair expired (>180s), waiting for rekey handshake before sending TUN data (dropped {} bytes)", n);
+                                continue;
+                            }
                             match kp.next_send_counter() {
                                 Ok(counter) => {
                                     let h4_val = config.h4.pick();

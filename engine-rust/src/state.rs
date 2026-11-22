@@ -8,6 +8,7 @@ pub const REKEY_AFTER_MESSAGES: u64 = 1 << 60;
 pub const REJECT_AFTER_MESSAGES: u64 = u64::MAX - (1 << 13);
 pub const REKEY_AFTER_TIME_SECS: u64 = 120;
 pub const HANDSHAKE_TIMEOUT_SECS: u64 = 5;
+pub const REJECT_AFTER_TIME_SECS: u64 = 180;
 
 #[derive(Debug, Default, Clone)]
 pub struct ReplayWindow {
@@ -75,6 +76,10 @@ impl TransportKeypair {
             replay_window: ReplayWindow::new(),
             birth_timestamp: current_timestamp_ms(),
         }
+    }
+
+    pub fn is_expired(&self, now: u64) -> bool {
+        (now.saturating_sub(self.birth_timestamp)) / 1000 >= REJECT_AFTER_TIME_SECS
     }
 
     pub fn next_send_counter(&mut self) -> Result<u64, String> {
@@ -323,22 +328,27 @@ impl SessionState {
 
     /// Check if rekeying is needed
     pub fn should_rekey(&self) -> bool {
+        let now = current_timestamp_ms();
+
+        // Universal Rate-Limit / In-Flight Protection (WireGuard RFC Section 5.4 & Cloudflare BoringTun):
+        // If a Handshake Initiation was sent less than HANDSHAKE_TIMEOUT_SECS (5s) ago,
+        // we MUST NOT send another initiation. This keeps local_index and ephemeral keys
+        // stable so that in-flight Handshake Responses match and avoids flooding.
+        if (now.saturating_sub(self.last_handshake_sent)) / 1000 < HANDSHAKE_TIMEOUT_SECS {
+            return false;
+        }
+
         if let Some(ref kp) = self.current_keypair {
             if kp.send_counter >= REKEY_AFTER_MESSAGES {
                 return true;
             }
-            let now = current_timestamp_ms();
             let elapsed_secs = (now.saturating_sub(self.last_handshake_completed)) / 1000;
             if elapsed_secs >= REKEY_AFTER_TIME_SECS {
                 return true;
             }
         } else {
-            // No active keypair yet
-            let now = current_timestamp_ms();
-            let elapsed_secs = (now.saturating_sub(self.last_handshake_sent)) / 1000;
-            if elapsed_secs >= HANDSHAKE_TIMEOUT_SECS {
-                return true;
-            }
+            // No active keypair yet, and >= HANDSHAKE_TIMEOUT_SECS since last attempt
+            return true;
         }
         false
     }

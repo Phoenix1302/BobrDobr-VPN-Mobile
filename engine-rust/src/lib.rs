@@ -493,4 +493,50 @@ AllowedIPs = 0.0.0.0/0, ::/0
         assert!(window.check_and_update(50));
         assert!(!window.check_and_update(50)); // Duplicate!
     }
+
+    #[test]
+    fn test_rekey_rate_limiting_and_expiration() {
+        let mut session = state::SessionState::new([1u8; 32], [2u8; 32], None);
+        let now = state::current_timestamp_ms();
+
+        // 1. Initial state (no handshake sent, no keypair): should_rekey is true
+        assert!(session.should_rekey());
+
+        // 2. Handshake initiation sent just now: should_rekey must be FALSE to protect local_index
+        session.last_handshake_sent = now;
+        assert!(!session.should_rekey());
+
+        // 3. Handshake initiation sent 6 seconds ago: should retry
+        session.last_handshake_sent = now - 6_000;
+        assert!(session.should_rekey());
+
+        // 4. Transport keypair installed, completed just now
+        let kp = state::TransportKeypair::new([3u8; 32], [4u8; 32], 100, 200);
+        assert!(!kp.is_expired(now));
+
+        session.current_keypair = Some(kp);
+        session.last_handshake_completed = now;
+        session.last_handshake_sent = now - 10_000;
+        assert!(!session.should_rekey());
+
+        // 5. Session reached 130s (> 120s REKEY_AFTER_TIME_SECS): should_rekey is true
+        session.last_handshake_completed = now - 130_000;
+        assert!(session.should_rekey());
+
+        // 6. Initiation is sent for rekeying: rate-limit MUST block immediate subsequent rekeys!
+        session.last_handshake_sent = now;
+        assert!(!session.should_rekey()); // Protected from rapid-fire local_index churn!
+
+        // 7. Verify keypair expiration after 180s (REJECT_AFTER_TIME_SECS)
+        let old_kp = state::TransportKeypair {
+            send_key: [0u8; 32],
+            recv_key: [0u8; 32],
+            send_counter: 0,
+            local_index: 100,
+            remote_index: 200,
+            replay_window: state::ReplayWindow::new(),
+            birth_timestamp: now - 181_000,
+        };
+        assert!(old_kp.is_expired(now));
+    }
 }
