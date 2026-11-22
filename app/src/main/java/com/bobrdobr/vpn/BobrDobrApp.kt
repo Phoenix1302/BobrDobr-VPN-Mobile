@@ -28,12 +28,14 @@ class BobrDobrApp : Application() {
             UiLogger.log(uiLevel, entry.tag, entry.message)
         }
 
-        CoreLogger.i(TAG, "BobrDobrApp initialized (v0.8.14-prerelease, build 94)")
+        CoreLogger.i(TAG, "BobrDobrApp initialized (v0.8.15-prerelease, build 95)")
 
         // Schedule background subscription synchronization with full crash immunity
         try {
-            SubscriptionManager.getInstance(this).schedulePeriodicSync(this)
-            CoreLogger.i(TAG, "Background subscription sync scheduled successfully")
+            val subManager = SubscriptionManager.getInstance(this)
+            subManager.schedulePeriodicSync(this)
+            subManager.syncQuietlyIfOnline()
+            CoreLogger.i(TAG, "Background subscription sync scheduled and cold start check launched successfully")
         } catch (t: Throwable) {
             CoreLogger.e(TAG, "Failed to schedule background WorkManager sync during startup: ${t.message}", t)
         }

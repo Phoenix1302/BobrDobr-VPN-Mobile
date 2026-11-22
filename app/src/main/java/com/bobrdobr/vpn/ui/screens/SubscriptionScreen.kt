@@ -60,6 +60,7 @@ import com.bobrdobr.vpn.ui.theme.BackgroundCard
 import com.bobrdobr.vpn.ui.theme.BackgroundCardActive
 import com.bobrdobr.vpn.ui.theme.BackgroundMain
 import com.bobrdobr.vpn.ui.theme.CardBorder
+import com.bobrdobr.vpn.ui.theme.NeonAmber
 import com.bobrdobr.vpn.ui.theme.NeonCyan
 import com.bobrdobr.vpn.ui.theme.NeonEmerald
 import com.bobrdobr.vpn.ui.theme.NeonRed
@@ -156,11 +157,7 @@ fun SubscriptionScreen(
                 subInfo = subInfo,
                 subServersCount = subServersCount,
                 onOpenCabinet = {
-                    val target = if (subInfo.cabinetUrl.isNotBlank()) {
-                        subInfo.cabinetUrl
-                    } else {
-                        com.bobrdobr.vpn.subscription.SubscriptionParser.deriveCabinetUrl(subInfo.url)
-                    }
+                    val target = subInfo.getRenewalUrl()
                     if (target.isNotBlank()) {
                         try {
                             val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
@@ -245,6 +242,8 @@ private fun ActiveSubscriptionCard(
     isSubscribing: Boolean,
     statusMessage: String
 ) {
+    val currentStatus = subInfo.currentStatus
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -287,17 +286,34 @@ private fun ActiveSubscriptionCard(
                     )
                 }
 
+                val currentStatus = subInfo.currentStatus
+                val (badgeBorder, badgeText, badgeColor) = when (currentStatus) {
+                    is com.bobrdobr.vpn.subscription.SubscriptionStatus.Active -> {
+                        if (currentStatus.isWarningPeriod) {
+                            Triple(NeonAmber.copy(alpha = 0.6f), "ИСТЕКАЕТ СКОРО", NeonAmber)
+                        } else {
+                            Triple(NeonEmerald.copy(alpha = 0.6f), "АКТИВНА", NeonEmerald)
+                        }
+                    }
+                    is com.bobrdobr.vpn.subscription.SubscriptionStatus.Expired -> Triple(NeonRed.copy(alpha = 0.7f), "ИСТЕКЛА", NeonRed)
+                    is com.bobrdobr.vpn.subscription.SubscriptionStatus.BlockedByAdmin -> Triple(NeonRed.copy(alpha = 0.7f), "ЗАБЛОКИРОВАН", NeonRed)
+                    is com.bobrdobr.vpn.subscription.SubscriptionStatus.InvalidToken -> Triple(NeonAmber.copy(alpha = 0.7f), "ОТОЗВАН", NeonAmber)
+                    is com.bobrdobr.vpn.subscription.SubscriptionStatus.RateLimited -> Triple(NeonAmber.copy(alpha = 0.6f), "ЛИМИТ", NeonAmber)
+                    is com.bobrdobr.vpn.subscription.SubscriptionStatus.NetworkError -> Triple(CardBorder, "СБОЙ", TextSecondary)
+                    is com.bobrdobr.vpn.subscription.SubscriptionStatus.None -> Triple(CardBorder, "НЕТ ПОДПИСКИ", TextSecondary)
+                }
+
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(NeonEmerald.copy(alpha = 0.15f))
-                        .border(1.dp, NeonEmerald.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                        .background(badgeColor.copy(alpha = 0.15f))
+                        .border(1.dp, badgeBorder, RoundedCornerShape(8.dp))
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "АКТИВНА",
+                        text = badgeText,
                         style = MaterialTheme.typography.labelSmall.copy(
-                            color = NeonEmerald,
+                            color = badgeColor,
                             fontWeight = FontWeight.Bold
                         )
                     )
@@ -327,7 +343,10 @@ private fun ActiveSubscriptionCard(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Button 1: Dynamic Personal Cabinet URL
+            // Button 1: Dynamic Personal Cabinet / Renewal URL
+            val isUrgent = currentStatus is com.bobrdobr.vpn.subscription.SubscriptionStatus.Expired ||
+                    (currentStatus as? com.bobrdobr.vpn.subscription.SubscriptionStatus.Active)?.isWarningPeriod == true
+
             Button(
                 onClick = onOpenCabinet,
                 modifier = Modifier
@@ -335,7 +354,7 @@ private fun ActiveSubscriptionCard(
                     .height(48.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = NeonCyan,
+                    containerColor = if (isUrgent) NeonAmber else NeonCyan,
                     contentColor = BackgroundMain
                 )
             ) {
@@ -346,7 +365,7 @@ private fun ActiveSubscriptionCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Личный кабинет",
+                    text = if (isUrgent) "Продлить подписку" else "Личный кабинет",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )

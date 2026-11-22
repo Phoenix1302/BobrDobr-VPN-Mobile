@@ -46,7 +46,7 @@ class SubscriptionParserTest {
         """.trimIndent()
 
         val info = SubscriptionParser.parse(json, "https://sub.example.com")
-        assertEquals(SubscriptionStatus.ACTIVE, info.status)
+        assertTrue(info.status is SubscriptionStatus.Active)
         assertEquals(0, info.isFrozen)
         assertTrue(info.isActive)
         assertFalse(info.isAccountBlocked)
@@ -84,7 +84,7 @@ class SubscriptionParserTest {
         """.trimIndent()
 
         val info = SubscriptionParser.parse(json)
-        assertEquals(SubscriptionStatus.BLOCKED, info.status)
+        assertEquals(SubscriptionStatus.BlockedByAdmin, info.status)
         assertEquals(2, info.isFrozen)
         assertFalse(info.isActive)
         assertTrue(info.isAccountBlocked)
@@ -160,7 +160,7 @@ class SubscriptionParserTest {
         val subUrl = "https://persona.netphoenix.ru/api/v1/sub/o5e4uglOoqoJMjaRUmAGRu5z_2_EcGp3L7Li2IVb5pw"
         val info = SubscriptionParser.parse(payload, subUrl)
 
-        assertEquals(SubscriptionStatus.ACTIVE, info.status)
+        assertTrue(info.status is SubscriptionStatus.Active)
         assertEquals("Egor", info.username)
         assertEquals("user", info.role)
         assertEquals("bobr.netphoenix.ru", info.serverHost)
@@ -294,7 +294,7 @@ class SubscriptionParserTest {
         """.trimIndent()
 
         val info = SubscriptionParser.parse(payload, "https://bobr.netphoenix.ru/sub/test")
-        assertEquals(SubscriptionStatus.ACTIVE, info.status)
+        assertTrue(info.status is SubscriptionStatus.Active)
         assertEquals("Egor", info.username)
         assertEquals("user", info.role)
         assertEquals("bobr.netphoenix.ru", info.serverHost)

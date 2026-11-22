@@ -8,30 +8,96 @@ import java.util.Locale
 
 /**
  * Operational lifecycle status of the BobrDobr VPN subscription.
+ * Sealed hierarchy providing precise domain states for active, warning, expired, blocked, and rate-limited.
  */
-enum class SubscriptionStatus(val displayName: String) {
-    ACTIVE("Активна"),
-    EXPIRING("Истекает скоро"),
-    EXPIRED("Срок действия истек"),
-    BLOCKED("Заблокирована"),
-    BANNED("Аккаунт забанен"),
-    FROZEN("Заморожена"),
-    UNKNOWN("Неизвестно");
+sealed interface SubscriptionStatus {
+    val displayName: String
+
+    data class Active(
+        val username: String = "Пользователь",
+        val expiresAt: java.time.LocalDateTime? = null,
+        val expiresAtMillis: Long? = null,
+        val remainingDays: Long = 0L,
+        val remainingHours: Long = 0L,
+        val isWarningPeriod: Boolean = false
+    ) : SubscriptionStatus {
+        override val displayName: String
+            get() = if (isWarningPeriod) "Истекает скоро" else "Активна"
+
+        val formattedRemaining: String
+            get() = when {
+                remainingDays > 0 -> "$remainingDays дн. $remainingHours ч."
+                remainingHours > 0 -> "$remainingHours ч."
+                else -> "Менее часа"
+            }
+    }
+
+    data object Expired : SubscriptionStatus {
+        override val displayName: String = "Срок действия истек"
+    }
+
+    data object BlockedByAdmin : SubscriptionStatus {
+        override val displayName: String = "Заблокирован администратором"
+    }
+
+    data object InvalidToken : SubscriptionStatus {
+        override val displayName: String = "Токен недействителен или отозван"
+    }
+
+    data object RateLimited : SubscriptionStatus {
+        override val displayName: String = "Превышен лимит запросов"
+    }
+
+    data class NetworkError(val message: String) : SubscriptionStatus {
+        override val displayName: String = "Ошибка сети: $message"
+    }
+
+    data object None : SubscriptionStatus {
+        override val displayName: String = "Нет подписки"
+    }
 
     companion object {
+        val ACTIVE = Active()
+        val EXPIRING = Active(isWarningPeriod = true)
+        val EXPIRED = Expired
+        val BLOCKED = BlockedByAdmin
+        val BANNED = BlockedByAdmin
+        val FROZEN = Expired
+        val UNKNOWN = None
+
         fun fromString(value: String): SubscriptionStatus {
             return when (value.lowercase().trim()) {
                 "active" -> ACTIVE
                 "expiring" -> EXPIRING
                 "expired" -> EXPIRED
-                "blocked" -> BLOCKED
-                "banned" -> BANNED
+                "blocked", "banned" -> BLOCKED
                 "frozen" -> FROZEN
+                "invalid", "unauthorized" -> InvalidToken
+                "rate_limited", "429" -> RateLimited
                 else -> UNKNOWN
             }
         }
     }
 }
+
+val SubscriptionStatus.canConnect: Boolean
+    get() = when (this) {
+        is SubscriptionStatus.Active -> true
+        is SubscriptionStatus.RateLimited -> true
+        is SubscriptionStatus.NetworkError -> true
+        is SubscriptionStatus.Expired,
+        is SubscriptionStatus.BlockedByAdmin,
+        is SubscriptionStatus.InvalidToken,
+        is SubscriptionStatus.None -> false
+    }
+
+val SubscriptionStatus.isWarning: Boolean
+    get() = (this as? SubscriptionStatus.Active)?.isWarningPeriod == true || this is SubscriptionStatus.RateLimited
+
+val SubscriptionStatus.isCritical: Boolean
+    get() = this is SubscriptionStatus.Expired ||
+            this is SubscriptionStatus.BlockedByAdmin ||
+            this is SubscriptionStatus.InvalidToken
 
 /**
  * Profile parsed from remote subscription.
@@ -115,8 +181,8 @@ data class SubscriptionInfo(
     val username: String = "",
     val role: String = "user",
     val serverHost: String = "",
-    val status: SubscriptionStatus = SubscriptionStatus.UNKNOWN,
-    val expiresAt: Long = 0L,         // Epoch timestamp in milliseconds
+    val status: SubscriptionStatus = SubscriptionStatus.None,
+    val expiresAt: Long = 0L,         // Epoch timestamp in milliseconds (0 = unlimited)
     val daysLeft: Int = 0,
     val isFrozen: Int = 0,           // 0 = Active, 1 = Expired, 2 = Blocked
     val isActive: Boolean = false,
@@ -126,10 +192,79 @@ data class SubscriptionInfo(
     val lastSyncTime: Long = 0L
 ) {
     val isAccountBlocked: Boolean
-        get() = isFrozen == 2 || status == SubscriptionStatus.BLOCKED || status == SubscriptionStatus.BANNED
+        get() = isFrozen == 2 || status is SubscriptionStatus.BlockedByAdmin
 
     val isSubscriptionExpired: Boolean
-        get() = isFrozen == 1 || status == SubscriptionStatus.EXPIRED || (expiresAt > 0 && expiresAt < System.currentTimeMillis())
+        get() = isFrozen == 1 || status is SubscriptionStatus.Expired || (expiresAt in 1..System.currentTimeMillis())
+
+    /**
+     * Dynamically computes the real-time status against device clock,
+     * ensuring immediate UI and VPN shutdown when expiry threshold is crossed.
+     */
+    fun computeStatus(nowMillis: Long = System.currentTimeMillis()): SubscriptionStatus {
+        if (!hasSubscription) {
+            return SubscriptionStatus.None
+        }
+        if (isAccountBlocked || isFrozen == 2) {
+            return SubscriptionStatus.BlockedByAdmin
+        }
+        if (isFrozen == 1 || (expiresAt in 1..nowMillis)) {
+            return SubscriptionStatus.Expired
+        }
+        if (status is SubscriptionStatus.InvalidToken) {
+            return SubscriptionStatus.InvalidToken
+        }
+        if (status is SubscriptionStatus.BlockedByAdmin) {
+            return SubscriptionStatus.BlockedByAdmin
+        }
+        if (status is SubscriptionStatus.Expired) {
+            return SubscriptionStatus.Expired
+        }
+        if (status is SubscriptionStatus.RateLimited) {
+            return SubscriptionStatus.RateLimited
+        }
+        if (status is SubscriptionStatus.NetworkError) {
+            return status
+        }
+
+        val diffMs = if (expiresAt > 0) expiresAt - nowMillis else 3650L * 24 * 3600 * 1000L
+        if (diffMs <= 0) {
+            return SubscriptionStatus.Expired
+        }
+
+        val remainingDays = diffMs / (1000L * 60 * 60 * 24)
+        val remainingHours = (diffMs % (1000L * 60 * 60 * 24)) / (1000L * 60 * 60)
+        val isWarning = remainingDays <= 3
+
+        val ldt = if (expiresAt > 0) {
+            try {
+                java.time.Instant.ofEpochMilli(expiresAt).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+            } catch (_: Exception) { null }
+        } else null
+
+        return SubscriptionStatus.Active(
+            username = username.ifBlank { "Пользователь" },
+            expiresAt = ldt,
+            expiresAtMillis = if (expiresAt > 0) expiresAt else null,
+            remainingDays = remainingDays,
+            remainingHours = remainingHours,
+            isWarningPeriod = isWarning
+        )
+    }
+
+    val currentStatus: SubscriptionStatus
+        get() = computeStatus()
+
+    fun getRenewalUrl(): String {
+        val derived = SubscriptionParser.deriveDashboardUrl(url)
+        if (derived.isNotBlank()) {
+            return derived
+        }
+        if (cabinetUrl.isNotBlank()) {
+            return cabinetUrl
+        }
+        return "https://bobrdobr.org"
+    }
 
     val formattedExpirationDate: String
         get() {
@@ -143,12 +278,13 @@ data class SubscriptionInfo(
         }
 
     val formattedDaysLeft: String
-        get() = when {
-            !hasSubscription -> "Нет подписки"
-            isAccountBlocked -> "Заблокировано администратором"
-            isSubscriptionExpired -> "Срок действия истек"
-            daysLeft > 0 -> "$daysLeft дн. защиты"
-            expiresAt > 0 -> "${((expiresAt - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).coerceAtLeast(0)} дн. защиты"
-            else -> "Бессрочная лицензия"
+        get() = when (val s = currentStatus) {
+            is SubscriptionStatus.Active -> s.formattedRemaining
+            is SubscriptionStatus.Expired -> "Срок действия истек"
+            is SubscriptionStatus.BlockedByAdmin -> "Заблокировано администратором"
+            is SubscriptionStatus.InvalidToken -> "Токен недействителен"
+            is SubscriptionStatus.RateLimited -> "Лимит запросов к серверу"
+            is SubscriptionStatus.NetworkError -> "Сбой сети при проверке"
+            is SubscriptionStatus.None -> "Нет подписки"
         }
 }

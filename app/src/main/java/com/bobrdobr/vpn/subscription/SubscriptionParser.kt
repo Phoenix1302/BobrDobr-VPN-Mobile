@@ -26,7 +26,7 @@ object SubscriptionParser {
 
     private const val TAG = "SubscriptionParser"
 
-    fun parse(payload: String, sourceUrl: String = ""): SubscriptionInfo {
+    fun parse(payload: String, sourceUrl: String = "", headerExpireSeconds: Long? = null): SubscriptionInfo {
         val trimmed = payload.trim()
         if (trimmed.isEmpty()) {
             throw IllegalArgumentException("Subscription payload cannot be empty")
@@ -34,7 +34,7 @@ object SubscriptionParser {
 
         // Try direct JSON parsing
         if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-            return parseSubscriptionJson(trimmed, sourceUrl)
+            return parseSubscriptionJson(trimmed, sourceUrl, headerExpireSeconds)
         }
 
         // Try Base64 decoding
@@ -42,7 +42,7 @@ object SubscriptionParser {
         if (decoded != null) {
             val decTrimmed = decoded.trim()
             if (decTrimmed.startsWith("{") && decTrimmed.endsWith("}")) {
-                return parseSubscriptionJson(decTrimmed, sourceUrl)
+                return parseSubscriptionJson(decTrimmed, sourceUrl, headerExpireSeconds)
             } else if (decTrimmed.contains("[Interface]", ignoreCase = true)) {
                 val profile = parseRawAwgConfig(decTrimmed, "Импортированная конфигурация")
                 return createSingleProfileSubscription(profile, sourceUrl)
@@ -58,7 +58,7 @@ object SubscriptionParser {
         throw IllegalArgumentException("Неподдерживаемый формат подписки: ожидается JSON или Base64")
     }
 
-    private fun parseSubscriptionJson(jsonStr: String, sourceUrl: String): SubscriptionInfo {
+    private fun parseSubscriptionJson(jsonStr: String, sourceUrl: String, headerExpireSeconds: Long? = null): SubscriptionInfo {
         val root = JSONObject(jsonStr)
 
         val rawStatus = root.optString("status", "active")
@@ -88,7 +88,6 @@ object SubscriptionParser {
                     if (exp < 100_000_000_000L) exp * 1000L else exp
                 }
                 is String -> {
-                    // Try parsing ISO 8601 string or numeric string
                     parseIso8601(rawExpires).takeIf { it > 0 }
                         ?: (rawExpires.toLongOrNull()?.let { if (it < 100_000_000_000L) it * 1000L else it } ?: 0L)
                 }
@@ -100,16 +99,47 @@ object SubscriptionParser {
             }
         }
 
+        // If body has no expires_at but HTTP header Subscription-Userinfo: expire=... is provided
+        if (expiresAt == 0L && headerExpireSeconds != null && headerExpireSeconds > 0) {
+            expiresAt = headerExpireSeconds * 1000L
+        }
+
         var serverHost = ""
         if (root.has("server") && !root.isNull("server")) {
             val srvObj = root.getJSONObject("server")
             serverHost = srvObj.optString("host", "")
         }
 
-        // Check is_frozen flag rules: 0 = Active, 1 = Expired, 2 = Blocked
+        // Determine domain status based on is_frozen, expires_at, and server status
+        val now = System.currentTimeMillis()
         when (isFrozen) {
-            1 -> status = SubscriptionStatus.EXPIRED
-            2 -> status = SubscriptionStatus.BLOCKED
+            1 -> status = SubscriptionStatus.Expired
+            2 -> status = SubscriptionStatus.BlockedByAdmin
+            else -> {
+                if (expiresAt in 1..now) {
+                    status = SubscriptionStatus.Expired
+                } else {
+                    val diffMs = if (expiresAt > 0) expiresAt - now else 3650L * 24 * 3600 * 1000L
+                    val remainingDays = diffMs / (1000L * 60 * 60 * 24)
+                    val remainingHours = (diffMs % (1000L * 60 * 60 * 24)) / (1000L * 60 * 60)
+                    val isWarning = remainingDays <= 3
+
+                    val ldt = if (expiresAt > 0) {
+                        try {
+                            java.time.Instant.ofEpochMilli(expiresAt).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+                        } catch (_: Exception) { null }
+                    } else null
+
+                    status = SubscriptionStatus.Active(
+                        username = username.ifBlank { "Пользователь" },
+                        expiresAt = ldt,
+                        expiresAtMillis = if (expiresAt > 0) expiresAt else null,
+                        remainingDays = remainingDays,
+                        remainingHours = remainingHours,
+                        isWarningPeriod = isWarning
+                    )
+                }
+            }
         }
 
         val daysLeft = if (expiresAt > 0) {
@@ -139,7 +169,7 @@ object SubscriptionParser {
         }
 
         return SubscriptionInfo(
-            hasSubscription = sourceUrl.isNotBlank() || profilesList.isNotEmpty(),
+            hasSubscription = true,
             url = sourceUrl,
             cabinetUrl = dynamicCabinetUrl,
             userId = userId,
@@ -150,7 +180,7 @@ object SubscriptionParser {
             expiresAt = expiresAt,
             daysLeft = daysLeft,
             isFrozen = isFrozen,
-            isActive = (status == SubscriptionStatus.ACTIVE || status == SubscriptionStatus.EXPIRING) && isFrozen == 0,
+            isActive = (status is SubscriptionStatus.Active) && isFrozen == 0,
             profiles = profilesList,
             lastSyncTime = System.currentTimeMillis()
         )
@@ -530,6 +560,25 @@ object SubscriptionParser {
     }
 
     /**
+     * Derives dynamic dashboard / renewal URL: https://<domain>/dashboard from subscription source URL.
+     */
+    fun deriveDashboardUrl(sourceUrl: String): String {
+        return try {
+            val uri = URI(sourceUrl.trim())
+            val scheme = uri.scheme ?: "https"
+            val host = uri.host
+            if (!host.isNullOrEmpty()) {
+                val port = if (uri.port != -1 && uri.port != 80 && uri.port != 443) ":${uri.port}" else ""
+                "$scheme://$host$port/dashboard"
+            } else {
+                ""
+            }
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    /**
      * Derives dynamic cabinet URL: https://<domain>/cloud from subscription source URL.
      */
     fun deriveCabinetUrl(sourceUrl: String): String {
@@ -567,24 +616,42 @@ object SubscriptionParser {
             return java.time.LocalDateTime.parse(normalized).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
         } catch (_: Exception) {}
 
+        val fallbackFormats = arrayOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd")
+        for (fmt in fallbackFormats) {
+            try {
+                val sdf = SimpleDateFormat(fmt, Locale.US)
+                sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                val parsed = sdf.parse(dateStr)
+                if (parsed != null) return parsed.time
+            } catch (_: Exception) {}
+        }
+
         return 0L
     }
 
     private fun createSingleProfileSubscription(profile: SubscriptionProfile, sourceUrl: String): SubscriptionInfo {
+        val now = System.currentTimeMillis()
+        val exp = now + 365L * 24L * 60L * 60L * 1000L
         return SubscriptionInfo(
             hasSubscription = true,
             url = sourceUrl,
-            cabinetUrl = deriveCabinetUrl(sourceUrl),
+            cabinetUrl = deriveDashboardUrl(sourceUrl),
             userId = "imported-key",
             username = "Пользователь",
             role = "user",
-            status = SubscriptionStatus.ACTIVE,
-            expiresAt = System.currentTimeMillis() + 365L * 24L * 60L * 60L * 1000L,
+            status = SubscriptionStatus.Active(
+                username = "Пользователь",
+                expiresAtMillis = exp,
+                remainingDays = 365L,
+                remainingHours = 0L,
+                isWarningPeriod = false
+            ),
+            expiresAt = exp,
             daysLeft = 365,
             isFrozen = 0,
             isActive = true,
             profiles = listOf(profile),
-            lastSyncTime = System.currentTimeMillis()
+            lastSyncTime = now
         )
     }
 

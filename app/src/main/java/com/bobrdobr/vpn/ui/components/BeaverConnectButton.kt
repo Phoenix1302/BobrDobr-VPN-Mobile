@@ -74,7 +74,8 @@ import com.bobrdobr.vpn.ui.theme.circularNeonGlow
 fun BeaverConnectButton(
     vpnState: VpnState,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isBlocked: Boolean = false
 ) {
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -128,7 +129,7 @@ fun BeaverConnectButton(
     val glowColor = when {
         isConnected -> NeonEmerald
         isConnecting -> NeonAmber
-        vpnState is VpnState.Error -> NeonRed
+        vpnState is VpnState.Error || isBlocked -> NeonRed
         else -> Color.Transparent
     }
 
@@ -301,6 +302,33 @@ fun BeaverConnectButton(
                                 color = NeonEmerald.copy(alpha = 0.85f),
                                 fontSize = 10.sp,
                                 letterSpacing = 0.8.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                    isBlocked -> {
+                        Text(
+                            text = "НЕДОСТУПНО",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = NeonRed,
+                                fontSize = 15.sp,
+                                letterSpacing = 0.5.sp
+                            ),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "ПОДПИСКА ТРЕБУЕТ ВНИМАНИЯ",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = NeonRed.copy(alpha = 0.85f),
+                                fontSize = 8.5.sp,
+                                letterSpacing = 0.2.sp,
                                 fontWeight = FontWeight.Bold
                             ),
                             maxLines = 1,

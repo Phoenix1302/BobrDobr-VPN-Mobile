@@ -11,6 +11,8 @@ import com.bobrdobr.vpn.repository.ServerRepository
 import com.bobrdobr.vpn.routing.DnsLeakProtector
 import com.bobrdobr.vpn.split.SplitTunnelManager
 import com.bobrdobr.vpn.subscription.SubscriptionManager
+import com.bobrdobr.vpn.subscription.SubscriptionStatus
+import com.bobrdobr.vpn.subscription.canConnect
 import com.bobrdobr.vpn.ui.model.ServerProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -93,6 +95,13 @@ class MainViewModel : ViewModel() {
 
     private val _subscriptionMessage = MutableStateFlow("")
     val subscriptionMessage: StateFlow<String> = _subscriptionMessage.asStateFlow()
+
+    private val _subscriptionBlockedDialogState = MutableStateFlow<SubscriptionStatus?>(null)
+    val subscriptionBlockedDialogState: StateFlow<SubscriptionStatus?> = _subscriptionBlockedDialogState.asStateFlow()
+
+    fun dismissSubscriptionBlockedDialog() {
+        _subscriptionBlockedDialogState.value = null
+    }
 
     private var isRepoInitialized = false
 
@@ -229,6 +238,17 @@ class MainViewModel : ViewModel() {
                     Toast.makeText(context, "Сначала добавьте шлюз или активируйте подписку", Toast.LENGTH_SHORT).show()
                     return
                 }
+
+                // Check subscription status if selected server is from subscription
+                if (_selectedServer.value.isFromSubscription) {
+                    val subManager = SubscriptionManager.getInstance(context)
+                    val currentStatus = subManager.subscriptionInfo.value.currentStatus
+                    if (!currentStatus.canConnect) {
+                        _subscriptionBlockedDialogState.value = currentStatus
+                        return
+                    }
+                }
+
                 val prepareIntent = VpnService.prepare(context)
                 if (prepareIntent != null) {
                     launchVpnPrepare(prepareIntent)
@@ -248,6 +268,16 @@ class MainViewModel : ViewModel() {
         if (_selectedServer.value == EMPTY_SERVER || _selectedServer.value.serverAddress.isBlank()) {
             Toast.makeText(context, "Выберите шлюз или подключите подписку", Toast.LENGTH_SHORT).show()
             return
+        }
+
+        // Check subscription status if selected server is from subscription
+        if (_selectedServer.value.isFromSubscription) {
+            val subManager = SubscriptionManager.getInstance(context)
+            val currentStatus = subManager.subscriptionInfo.value.currentStatus
+            if (!currentStatus.canConnect) {
+                _subscriptionBlockedDialogState.value = currentStatus
+                return
+            }
         }
 
         val config = com.bobrdobr.vpn.routing.TunnelConfigAssembler.assemble(

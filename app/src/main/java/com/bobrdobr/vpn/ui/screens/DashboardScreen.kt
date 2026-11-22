@@ -2,6 +2,7 @@ package com.bobrdobr.vpn.ui.screens
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -90,13 +91,19 @@ import kotlin.random.Random
 import com.bobrdobr.vpn.R
 import org.bobrdobr.vpn.core.model.VpnProtocol
 import org.bobrdobr.vpn.core.model.VpnState
+import android.net.Uri
+import android.widget.Toast
 import com.bobrdobr.vpn.ui.components.BeaverConnectButton
 import com.bobrdobr.vpn.ui.components.CyberServerCard
 import com.bobrdobr.vpn.ui.components.DamStatusBar
 import com.bobrdobr.vpn.ui.components.DesktopTag
 import com.bobrdobr.vpn.ui.components.HydroTelemetryBar
 import com.bobrdobr.vpn.ui.components.ProtocolBadge
+import com.bobrdobr.vpn.ui.components.SubscriptionBlockedExplanationDialog
+import com.bobrdobr.vpn.ui.components.SubscriptionStatusBanner
 import com.bobrdobr.vpn.ui.components.UpdateDialog
+import com.bobrdobr.vpn.subscription.SubscriptionManager
+import com.bobrdobr.vpn.subscription.canConnect
 import com.bobrdobr.vpn.ui.model.ServerProfile
 import com.bobrdobr.vpn.ui.theme.BackgroundCard
 import com.bobrdobr.vpn.ui.theme.BackgroundCardActive
@@ -131,7 +138,26 @@ fun DashboardScreen(
     val selectedServer by viewModel.selectedServer.collectAsStateWithLifecycle()
     val servers by viewModel.servers.collectAsStateWithLifecycle()
 
-    val updateManager = remember { AppUpdateManager.getInstance(context) }
+    val subManager = remember { SubscriptionManager.getInstance(context) }
+    val subInfo by subManager.subscriptionInfo.collectAsStateWithLifecycle()
+    val blockedDialogStatus by viewModel.subscriptionBlockedDialogState.collectAsStateWithLifecycle()
+    val isBlocked = selectedServer.isFromSubscription && !subInfo.currentStatus.canConnect
+
+    val onRenewAction = {
+        val renewalUrl = subInfo.getRenewalUrl()
+        if (renewalUrl.isNotBlank()) {
+            try {
+                val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(renewalUrl))
+                context.startActivity(browserIntent)
+            } catch (e: Exception) {
+                Toast.makeText(context, "Не удалось открыть браузер: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context, "Ссылка на личный кабинет недоступна", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val updateManager = remember { com.bobrdobr.vpn.update.AppUpdateManager.getInstance(context) }
     val updateState by updateManager.updateState.collectAsStateWithLifecycle()
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showQuickSwitchDialog by remember { mutableStateOf(false) }
@@ -412,11 +438,23 @@ fun DashboardScreen(
         // Dam Status Bar
         DamStatusBar(vpnState = vpnState)
 
-        Spacer(modifier = Modifier.height(28.dp))
+        if (subInfo.hasSubscription) {
+            Spacer(modifier = Modifier.height(16.dp))
+            SubscriptionStatusBanner(
+                subInfo = subInfo,
+                onRenew = onRenewAction,
+                onNavigateToSubscription = {
+                    viewModel.setNavigationTab(com.bobrdobr.vpn.ui.viewmodel.NavigationTab.SUBSCRIPTION)
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
 
         // Central Beaver Connection Button
         BeaverConnectButton(
             vpnState = vpnState,
+            isBlocked = isBlocked,
             onToggle = {
                 viewModel.toggleVpn(context) { intent ->
                     vpnPrepareLauncher.launch(intent)
@@ -545,6 +583,17 @@ fun DashboardScreen(
             onDismiss = { showUpdateDialog = false },
             onDownloadAndInstall = { rel ->
                 updateManager.downloadAndInstall(rel)
+            }
+        )
+    }
+
+    if (blockedDialogStatus != null) {
+        SubscriptionBlockedExplanationDialog(
+            status = blockedDialogStatus!!,
+            onDismiss = { viewModel.dismissSubscriptionBlockedDialog() },
+            onRenew = onRenewAction,
+            onNavigateToSubscription = {
+                viewModel.setNavigationTab(com.bobrdobr.vpn.ui.viewmodel.NavigationTab.SUBSCRIPTION)
             }
         )
     }
