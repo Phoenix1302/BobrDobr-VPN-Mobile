@@ -6,6 +6,8 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,14 +23,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -380,6 +387,176 @@ fun SubscriptionBlockedExplanationDialog(
         containerColor = BackgroundCard,
         shape = RoundedCornerShape(18.dp)
     )
+}
+
+/**
+ * SubscriptionAlertToast: In-app animated floating Cyberpunk toast notification.
+ * Appears when:
+ * 1. Subscription has < 3 days remaining ("Подписка скоро закончится", button "Подробнее").
+ * 2. Subscription has expired / blocked ("Подписка закончилась", button "Подробнее").
+ * Clicking "Подробнее" navigates directly to the Subscription screen.
+ */
+@Composable
+fun SubscriptionAlertToast(
+    status: SubscriptionStatus,
+    visible: Boolean,
+    onDetailsClick: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // Auto-dismiss floating toast after 6.5 seconds
+    LaunchedEffect(visible, status) {
+        if (visible) {
+            delay(6500L)
+            onDismiss()
+        }
+    }
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+        modifier = modifier
+    ) {
+        val (icon, title, subtitle, accentColor) = when (status) {
+            is SubscriptionStatus.Active -> {
+                Tuple4(
+                    "⏳",
+                    "Подписка скоро закончится",
+                    "Осталось: ${status.formattedRemaining}",
+                    NeonAmber
+                )
+            }
+            is SubscriptionStatus.Expired -> {
+                Tuple4(
+                    "❄️",
+                    "Подписка закончилась",
+                    "Подключение к сети заморожено",
+                    Color(0xFF70D6FF) // Frost cyan
+                )
+            }
+            is SubscriptionStatus.BlockedByAdmin -> {
+                Tuple4(
+                    "⛔",
+                    "Доступ заблокирован",
+                    "Действие аккаунта приостановлено",
+                    NeonRed
+                )
+            }
+            is SubscriptionStatus.InvalidToken -> {
+                Tuple4(
+                    "🔑",
+                    "Токен недействителен",
+                    "Требуется обновить ссылку",
+                    NeonAmber
+                )
+            }
+            else -> {
+                Tuple4(
+                    "⚠️",
+                    "Статус подписки",
+                    "Требуется внимание к доступу",
+                    NeonAmber
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .neonGlow(color = accentColor, radius = 8.dp, alpha = 0.3f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(BackgroundCardActive)
+                .border(1.dp, accentColor.copy(alpha = 0.65f), RoundedCornerShape(14.dp))
+                .clickable { onDetailsClick() }
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Status Emoji / Icon Container
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = 0.15f))
+                        .border(1.dp, accentColor.copy(alpha = 0.5f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = icon,
+                        fontSize = 16.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary,
+                            fontSize = 12.5.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(1.dp))
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = TextSecondary,
+                            fontSize = 10.5.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // "Подробнее" Button
+                Button(
+                    onClick = onDetailsClick,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor,
+                        contentColor = Color.Black
+                    ),
+                    modifier = Modifier.height(30.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = "Подробнее",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                // Dismiss ✕ Button
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Закрыть",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
+        }
+    }
 }
 
 private data class Tuple4<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)

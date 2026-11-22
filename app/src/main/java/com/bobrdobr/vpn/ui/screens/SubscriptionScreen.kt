@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -330,6 +331,71 @@ private fun ActiveSubscriptionCard(
 
             SubscriptionDetailRow(label = "Шлюзов в подписке:", value = "$subServersCount (AWG + OpenConnect)")
 
+            val noticeConfig = when {
+                currentStatus is com.bobrdobr.vpn.subscription.SubscriptionStatus.Expired -> {
+                    Triple(
+                        Color(0xFF70D6FF),
+                        "❄️ ПОДПИСКА ЗАВЕРШЕНА",
+                        "Срок действия подписки подошёл к концу, подключение заморожено.\n\nЧто делать:\n1. Нажмите «Продлить в личном кабинете» ниже\n2. Продлите тариф на сайте сервиса\n3. Нажмите кнопку «Обновить» для получения новой конфигурации"
+                    )
+                }
+                currentStatus is com.bobrdobr.vpn.subscription.SubscriptionStatus.BlockedByAdmin -> {
+                    Triple(
+                        NeonRed,
+                        "⛔ ДОСТУП ЗАБЛОКИРОВАН",
+                        "Ваш аккаунт был заблокирован администратором панели управления. Для выяснения причин и разблокировки обратитесь к администратору или войдите в личный кабинет."
+                    )
+                }
+                currentStatus is com.bobrdobr.vpn.subscription.SubscriptionStatus.InvalidToken -> {
+                    Triple(
+                        NeonAmber,
+                        "🔑 ТОКЕН ОТОЗВАН ИЛИ НЕВЕРЕН",
+                        "Используемый токен подписки больше недействителен. Перейдите в личный кабинет, скопируйте новую ссылку и подключите её в приложении."
+                    )
+                }
+                (currentStatus as? com.bobrdobr.vpn.subscription.SubscriptionStatus.Active)?.isWarningPeriod == true -> {
+                    Triple(
+                        NeonAmber,
+                        "⏳ СКОРО ОКОНЧАНИЕ ПОДПИСКИ",
+                        "До окончания доступа осталось менее 3 дней (${currentStatus.formattedRemaining}). Продлите подписку в личном кабинете заранее, чтобы защита не прерывалась."
+                    )
+                }
+                else -> null
+            }
+
+            if (noticeConfig != null) {
+                Spacer(modifier = Modifier.height(14.dp))
+                val (noticeColor, noticeTitle, noticeText) = noticeConfig
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(noticeColor.copy(alpha = 0.12f))
+                        .border(1.dp, noticeColor.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    Column {
+                        Text(
+                            text = noticeTitle,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = noticeColor,
+                                letterSpacing = 0.8.sp
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = noticeText,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = TextPrimary,
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp
+                            )
+                        )
+                    }
+                }
+            }
+
             if (statusMessage.isNotBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -354,7 +420,7 @@ private fun ActiveSubscriptionCard(
                     .height(48.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isUrgent) NeonAmber else NeonCyan,
+                    containerColor = if (currentStatus is com.bobrdobr.vpn.subscription.SubscriptionStatus.Expired) Color(0xFF70D6FF) else if (isUrgent) NeonAmber else NeonCyan,
                     contentColor = BackgroundMain
                 )
             ) {
@@ -365,7 +431,7 @@ private fun ActiveSubscriptionCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (isUrgent) "Продлить подписку" else "Личный кабинет",
+                    text = if (isUrgent) "Продлить в личном кабинете" else "Личный кабинет",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )

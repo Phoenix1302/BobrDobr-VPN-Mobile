@@ -126,10 +126,16 @@ fun BeaverConnectButton(
         label = "aura_alpha"
     )
 
+    val FrostCyan = Color(0xFF70D6FF)
+    val FrostIce = Color(0xFFA5E5FF)
+    val FrostDark = Color(0xFF0C1F2D)
+    val FrostBg = Color(0xFF07121C)
+
     val glowColor = when {
         isConnected -> NeonEmerald
         isConnecting -> NeonAmber
-        vpnState is VpnState.Error || isBlocked -> NeonRed
+        isBlocked -> FrostCyan
+        vpnState is VpnState.Error -> NeonRed
         else -> Color.Transparent
     }
 
@@ -162,8 +168,8 @@ fun BeaverConnectButton(
                 .size(196.dp)
                 .circularNeonGlow(
                     color = animatedGlowColor,
-                    radius = if (isConnected) 24.dp else if (isConnecting) 18.dp else 0.dp,
-                    alpha = if (isConnected) 0.5f else if (isConnecting) 0.4f else 0f
+                    radius = if (isConnected) 24.dp else if (isConnecting) 18.dp else if (isBlocked) 16.dp else 0.dp,
+                    alpha = if (isConnected) 0.5f else if (isConnecting) 0.4f else if (isBlocked) 0.35f else 0f
                 )
         )
 
@@ -211,6 +217,24 @@ fun BeaverConnectButton(
                     )
                 }
             }
+            isBlocked -> {
+                // Frosted crystalline ice perimeter
+                Canvas(modifier = Modifier.size(190.dp)) {
+                    val strokeWidth = 2.5.dp.toPx()
+                    val sweep = Brush.sweepGradient(
+                        0.0f to FrostCyan.copy(alpha = 0.35f),
+                        0.25f to FrostIce,
+                        0.5f to FrostCyan.copy(alpha = 0.35f),
+                        0.75f to FrostIce,
+                        1.0f to FrostCyan.copy(alpha = 0.35f)
+                    )
+                    drawCircle(
+                        brush = sweep,
+                        radius = (size.minDimension - strokeWidth) / 2f,
+                        style = Stroke(width = strokeWidth)
+                    )
+                }
+            }
             else -> {
                 // Clean mature graphite contour
                 Canvas(modifier = Modifier.size(190.dp)) {
@@ -231,15 +255,20 @@ fun BeaverConnectButton(
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(
-                            if (isConnected) BackgroundCardActive else BackgroundCard,
-                            BackgroundMain
-                        )
+                        colors = when {
+                            isConnected -> listOf(BackgroundCardActive, BackgroundMain)
+                            isBlocked -> listOf(FrostDark, FrostBg)
+                            else -> listOf(BackgroundCard, BackgroundMain)
+                        }
                     )
                 )
                 .border(
                     width = 1.dp,
-                    color = if (isConnected) NeonEmerald.copy(alpha = 0.5f) else CardBorder.copy(alpha = 0.6f),
+                    color = when {
+                        isConnected -> NeonEmerald.copy(alpha = 0.5f)
+                        isBlocked -> FrostIce.copy(alpha = 0.55f)
+                        else -> CardBorder.copy(alpha = 0.6f)
+                    },
                     shape = CircleShape
                 )
                 .clickable(
@@ -311,10 +340,10 @@ fun BeaverConnectButton(
                     }
                     isBlocked -> {
                         Text(
-                            text = "НЕДОСТУПНО",
+                            text = "ЗАМОРОЖЕНО",
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.ExtraBold,
-                                color = NeonRed,
+                                color = FrostIce,
                                 fontSize = 15.sp,
                                 letterSpacing = 0.5.sp
                             ),
@@ -324,9 +353,9 @@ fun BeaverConnectButton(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "ПОДПИСКА ТРЕБУЕТ ВНИМАНИЯ",
+                            text = "ПОДПИСКА ИСТЕКЛА",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = NeonRed.copy(alpha = 0.85f),
+                                color = FrostCyan.copy(alpha = 0.85f),
                                 fontSize = 8.5.sp,
                                 letterSpacing = 0.2.sp,
                                 fontWeight = FontWeight.Bold
