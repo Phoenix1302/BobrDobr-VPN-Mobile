@@ -37,58 +37,49 @@ func TlsChannel(conn net.Conn, bufR *bufio.Reader, cSess *session.ConnSession, r
 			cSess.ResetTLSReadDead.Store(false)
 		}
 
-		pl := GetPayloadBuffer()
-		bytesReceived, err := bufR.Read(pl.Data)
+		var header [8]byte
+		_, err := io.ReadFull(bufR, header[:])
 		if err != nil {
-			PutPayloadBuffer(pl)
 			select {
 			case <-cSess.CloseChan:
 				return
 			default:
-				base.Info("TLS CSTP read error:", err)
+				base.Info("TLS CSTP read header error:", err)
 				return
 			}
 		}
 
-		if bytesReceived < 8 {
-			base.Warn("TLS CSTP received runt packet:", bytesReceived)
-			PutPayloadBuffer(pl)
+		if header[0] != 0x53 || header[1] != 0x54 || header[2] != 0x46 || header[3] != 0x01 {
+			base.Warn("Invalid CSTP header magic:", header[:4])
 			continue
 		}
 
-		if pl.Data[0] != 0x53 || pl.Data[1] != 0x54 || pl.Data[2] != 0x46 || pl.Data[3] != 0x01 {
-			base.Warn("Invalid CSTP header magic:", pl.Data[:4])
-			PutPayloadBuffer(pl)
-			continue
+		dataLen := binary.BigEndian.Uint16(header[4:6])
+		pktType := header[6]
+
+		pl := GetPayloadBuffer()
+		if cap(pl.Data) < int(dataLen) {
+			pl.Data = make([]byte, dataLen)
+		} else {
+			pl.Data = pl.Data[:dataLen]
 		}
 
-		dataLen := binary.BigEndian.Uint16(pl.Data[4:6])
-		pktType := pl.Data[6]
-
-		// If the CSTP frame was partially read by bufR, read remainder
-		targetLen := 8 + int(dataLen)
-		if bytesReceived < targetLen {
-			needed := targetLen - bytesReceived
-			if needed > 0 {
-				if cap(pl.Data) < targetLen {
-					newBuf := make([]byte, targetLen)
-					copy(newBuf, pl.Data[:bytesReceived])
-					pl.Data = newBuf
-				}
-				_, rErr := io.ReadFull(bufR, pl.Data[bytesReceived:targetLen])
-				if rErr != nil {
-					base.Error("TLS CSTP read remainder error:", rErr)
-					PutPayloadBuffer(pl)
+		if dataLen > 0 {
+			_, err = io.ReadFull(bufR, pl.Data)
+			if err != nil {
+				PutPayloadBuffer(pl)
+				select {
+				case <-cSess.CloseChan:
+					return
+				default:
+					base.Error("TLS CSTP read payload error:", err)
 					return
 				}
-				bytesReceived = targetLen
 			}
 		}
 
 		switch pktType {
 		case 0x00: // DATA
-			copy(pl.Data, pl.Data[8:8+dataLen])
-			pl.Data = pl.Data[:dataLen]
 			pl.Type = 0x00
 			select {
 			case cSess.PayloadIn <- pl:

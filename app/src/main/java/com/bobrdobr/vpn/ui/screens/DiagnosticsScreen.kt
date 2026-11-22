@@ -76,7 +76,6 @@ import com.bobrdobr.vpn.debug.DebugLogger
 import com.bobrdobr.vpn.debug.DiagnosticDumpManager
 import com.bobrdobr.vpn.debug.LogEntry
 import com.bobrdobr.vpn.debug.LogLevel
-import com.bobrdobr.vpn.ui.components.UpdateDialog
 import com.bobrdobr.vpn.ui.theme.BackgroundCard
 import com.bobrdobr.vpn.ui.theme.BackgroundCardActive
 import com.bobrdobr.vpn.ui.theme.BackgroundMain
@@ -111,7 +110,6 @@ fun DiagnosticsScreen(
     val updateManager = remember { AppUpdateManager.getInstance(context) }
     val includePrereleases by updateManager.includePrereleases.collectAsStateWithLifecycle()
     val updateState by updateManager.updateState.collectAsStateWithLifecycle()
-    var showUpdateDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         updateManager.manualCheckEvent.collect { result ->
@@ -120,7 +118,7 @@ fun DiagnosticsScreen(
                     Toast.makeText(context, "У вас установлена последняя версия (${AppUpdateManager.CURRENT_VERSION_NAME})", Toast.LENGTH_SHORT).show()
                 }
                 is AppUpdateManager.ManualCheckResult.Available -> {
-                    showUpdateDialog = true
+                    Toast.makeText(context, "Доступно обновление: ${result.release.version}!", Toast.LENGTH_SHORT).show()
                 }
                 is AppUpdateManager.ManualCheckResult.Failed -> {
                     Toast.makeText(context, "Сбой проверки обновлений: ${result.error}", Toast.LENGTH_SHORT).show()
@@ -571,10 +569,13 @@ fun DiagnosticsScreen(
         ) {
             val listState = rememberLazyListState()
 
-            // Auto-scroll to bottom on new log arrival
+            // Auto-scroll to bottom on new log arrival only if user is already near bottom
             LaunchedEffect(logs.size) {
                 if (logs.isNotEmpty()) {
-                    listState.scrollToItem(logs.size - 1)
+                    val isAtBottom = !listState.canScrollForward
+                    if (isAtBottom || logs.size <= 5) {
+                        listState.scrollToItem(logs.size - 1)
+                    }
                 }
             }
 
@@ -672,21 +673,6 @@ fun DiagnosticsScreen(
         }
 
         Spacer(modifier = Modifier.height(30.dp))
-    }
-
-    val availableRelease = (updateState as? UpdateState.UpdateAvailable)?.release
-        ?: (updateState as? UpdateState.Downloading)?.release
-        ?: (updateState as? UpdateState.ReadyToInstall)?.release
-
-    if (showUpdateDialog && availableRelease != null) {
-        UpdateDialog(
-            release = availableRelease,
-            updateState = updateState,
-            onDismiss = { showUpdateDialog = false },
-            onDownloadAndInstall = { rel ->
-                updateManager.downloadAndInstall(rel)
-            }
-        )
     }
 }
 

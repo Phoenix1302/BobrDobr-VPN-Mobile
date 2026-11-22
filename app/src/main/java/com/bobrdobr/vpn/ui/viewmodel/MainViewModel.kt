@@ -8,7 +8,6 @@ import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bobrdobr.vpn.repository.ServerRepository
-import com.bobrdobr.vpn.routing.DnsLeakProtector
 import com.bobrdobr.vpn.split.SplitTunnelManager
 import com.bobrdobr.vpn.subscription.SubscriptionManager
 import com.bobrdobr.vpn.subscription.SubscriptionStatus
@@ -39,6 +38,9 @@ class MainViewModel : ViewModel() {
         const val KEY_BYPASS_ENABLED = "key_bypass_enabled"
         const val KEY_BYPASS_SUBNETS = "key_bypass_subnets"
         const val KEY_SELECTED_SERVER_ID = "key_selected_server_id"
+        const val KEY_KILL_SWITCH = "key_kill_switch_enabled"
+        const val KEY_AUTO_CONNECT = "key_auto_connect_enabled"
+        const val KEY_SELECTED_DNS = "key_selected_dns"
         const val DEFAULT_BYPASS_SUBNETS = ""
 
         val EMPTY_SERVER = ServerProfile(
@@ -70,8 +72,8 @@ class MainViewModel : ViewModel() {
     private val _selectedServer = MutableStateFlow<ServerProfile>(EMPTY_SERVER)
     val selectedServer: StateFlow<ServerProfile> = _selectedServer.asStateFlow()
 
-    // Settings state
-    private val _killSwitchEnabled = MutableStateFlow(true)
+    // Settings state (defaults to false per user privacy & UX preference)
+    private val _killSwitchEnabled = MutableStateFlow(false)
     val killSwitchEnabled: StateFlow<Boolean> = _killSwitchEnabled.asStateFlow()
 
     private val _autoConnectEnabled = MutableStateFlow(false)
@@ -111,6 +113,9 @@ class MainViewModel : ViewModel() {
             prefs = p
             _bypassEnabled.value = p.getBoolean(KEY_BYPASS_ENABLED, false)
             _bypassSubnets.value = p.getString(KEY_BYPASS_SUBNETS, DEFAULT_BYPASS_SUBNETS) ?: DEFAULT_BYPASS_SUBNETS
+            _killSwitchEnabled.value = p.getBoolean(KEY_KILL_SWITCH, false)
+            _autoConnectEnabled.value = p.getBoolean(KEY_AUTO_CONNECT, false)
+            _selectedDns.value = p.getString(KEY_SELECTED_DNS, "DNS из конфигурации туннеля (по умолчанию)") ?: "DNS из конфигурации туннеля (по умолчанию)"
         }
         if (isRepoInitialized) return
         isRepoInitialized = true
@@ -197,12 +202,15 @@ class MainViewModel : ViewModel() {
         _subscriptionMessage.value = "Подписка отключена"
     }
 
-    fun toggleKillSwitch(enabled: Boolean) {
+    fun toggleKillSwitch(enabled: Boolean, context: Context? = null) {
         _killSwitchEnabled.value = enabled
+        prefs?.edit()?.putBoolean(KEY_KILL_SWITCH, enabled)?.apply()
+        context?.let { restartTunnelIfActive(it) }
     }
 
     fun toggleAutoConnect(enabled: Boolean) {
         _autoConnectEnabled.value = enabled
+        prefs?.edit()?.putBoolean(KEY_AUTO_CONNECT, enabled)?.apply()
     }
 
     fun toggleBypass(enabled: Boolean, context: Context? = null) {
@@ -221,8 +229,10 @@ class MainViewModel : ViewModel() {
         context?.let { restartTunnelIfActive(it) }
     }
 
-    fun setDns(dns: String) {
+    fun setDns(dns: String, context: Context? = null) {
         _selectedDns.value = dns
+        prefs?.edit()?.putString(KEY_SELECTED_DNS, dns)?.apply()
+        context?.let { restartTunnelIfActive(it) }
     }
 
     /**
@@ -285,7 +295,8 @@ class MainViewModel : ViewModel() {
             profile = _selectedServer.value,
             bypassEnabled = _bypassEnabled.value,
             bypassSubnetsRaw = _bypassSubnets.value,
-            fallbackDnsSelection = _selectedDns.value
+            fallbackDnsSelection = _selectedDns.value,
+            killSwitchEnabled = _killSwitchEnabled.value
         )
 
         VpnTunnelService.start(context, config)

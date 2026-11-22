@@ -378,7 +378,7 @@ class SubscriptionManager private constructor(private val context: Context) {
 
         val statusStr = prefs.getString(KEY_LAST_STATUS, "ACTIVE") ?: "ACTIVE"
         val userId = prefs.getString(KEY_USER_ID, "") ?: ""
-        val username = prefs.getString(KEY_USERNAME, "Egor") ?: "Egor"
+        val username = prefs.getString(KEY_USERNAME, "Пользователь") ?: "Пользователь"
         val role = prefs.getString(KEY_ROLE, "user") ?: "user"
         val serverHost = prefs.getString(KEY_SERVER_HOST, "") ?: ""
         val expiresAt = prefs.getLong(KEY_EXPIRES_AT, 0L)

@@ -74,6 +74,44 @@ class AppUpdateManager private constructor(private val appContext: Context) {
                 instance ?: AppUpdateManager(context.applicationContext).also { instance = it }
             }
         }
+
+        fun cleanVersion(v: String): String = v.trim().removePrefix("v").removePrefix("V").trim()
+
+        fun parseVersionComponents(version: String): List<Int> {
+            val cleaned = cleanVersion(version)
+            val mainPart = cleaned.split("-")[0]
+            return mainPart.split(".").mapNotNull { it.toIntOrNull() }
+        }
+
+        fun compareVersions(v1: String, v2: String): Int {
+            val parts1 = parseVersionComponents(v1)
+            val parts2 = parseVersionComponents(v2)
+            val maxLen = maxOf(parts1.size, parts2.size)
+
+            for (i in 0 until maxLen) {
+                val num1 = parts1.getOrElse(i) { 0 }
+                val num2 = parts2.getOrElse(i) { 0 }
+                if (num1 != num2) {
+                    return num1.compareTo(num2)
+                }
+            }
+
+            // SemVer 2.0.0: when base versions are equal, a normal release has higher
+            // precedence than a pre-release version (e.g. 0.9.8 > 0.9.8-prerelease).
+            val pre1 = cleanVersion(v1).substringAfter("-", "")
+            val pre2 = cleanVersion(v2).substringAfter("-", "")
+
+            return when {
+                pre1.isEmpty() && pre2.isNotEmpty() -> 1   // Final release is newer than pre-release
+                pre1.isNotEmpty() && pre2.isEmpty() -> -1  // Pre-release is older than final release
+                pre1.isNotEmpty() && pre2.isNotEmpty() -> pre1.compareTo(pre2)
+                else -> 0
+            }
+        }
+
+        fun isNewerVersion(remote: String, current: String): Boolean {
+            return compareVersions(remote, current) > 0
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -394,42 +432,5 @@ class AppUpdateManager private constructor(private val appContext: Context) {
         }
 
         return destinationFile
-    }
-
-    fun cleanVersion(v: String): String = v.trim().removePrefix("v").removePrefix("V").trim()
-
-    private fun parseVersionComponents(version: String): List<Int> {
-        val cleaned = cleanVersion(version)
-        val mainPart = cleaned.split("-")[0]
-        return mainPart.split(".").mapNotNull { it.toIntOrNull() }
-    }
-
-    fun compareVersions(v1: String, v2: String): Int {
-        val parts1 = parseVersionComponents(v1)
-        val parts2 = parseVersionComponents(v2)
-        val maxLen = maxOf(parts1.size, parts2.size)
-
-        for (i in 0 until maxLen) {
-            val num1 = parts1.getOrElse(i) { 0 }
-            val num2 = parts2.getOrElse(i) { 0 }
-            if (num1 != num2) {
-                return num1.compareTo(num2)
-            }
-        }
-
-        // When numerical base versions are identical (e.g. 0.8.0 vs 0.8.0-prerelease),
-        // treat them as the same release cycle to avoid spurious update notifications
-        // on installed pre-release test builds.
-        val pre1 = cleanVersion(v1).substringAfter("-", "")
-        val pre2 = cleanVersion(v2).substringAfter("-", "")
-
-        return when {
-            pre1.isNotEmpty() && pre2.isNotEmpty() -> pre1.compareTo(pre2)
-            else -> 0
-        }
-    }
-
-    fun isNewerVersion(remote: String, current: String): Boolean {
-        return compareVersions(remote, current) > 0
     }
 }

@@ -105,7 +105,10 @@ fun SplitTunnelScreen(
     DisposableEffect(Unit) {
         onDispose {
             if (viewModel?.isTunnelActive() == true) {
-                val changed = isEnabled != initialEnabled || mode != initialMode || selectedApps != initialApps
+                val currentEnabled = splitManager.isEnabled.value
+                val currentMode = splitManager.mode.value
+                val currentApps = splitManager.selectedApps.value
+                val changed = currentEnabled != initialEnabled || currentMode != initialMode || currentApps != initialApps
                 if (changed) {
                     viewModel.restartTunnelIfActive(context)
                 }

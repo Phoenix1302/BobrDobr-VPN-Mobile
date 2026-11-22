@@ -200,9 +200,9 @@ class NativeEngineController(
                     ((rawStats.txBytes - prevStats.txBytes) / deltaSec).toLong()
                 } else 0L
 
-                // If native engine provides instantaneous speed in bps (bits per sec), convert to bytes/sec
-                val nativeDownBytes = if (rawStats.rxSpeedBytesPerSec > 0) rawStats.rxSpeedBytesPerSec / 8 else 0L
-                val nativeUpBytes = if (rawStats.txSpeedBytesPerSec > 0) rawStats.txSpeedBytesPerSec / 8 else 0L
+                // Native engine now supplies speed in bytes/sec through JNI
+                val nativeDownBytes = if (rawStats.rxSpeedBytesPerSec > 0) rawStats.rxSpeedBytesPerSec else 0L
+                val nativeUpBytes = if (rawStats.txSpeedBytesPerSec > 0) rawStats.txSpeedBytesPerSec else 0L
 
                 val finalDown = if (calculatedDown > 0) calculatedDown else nativeDownBytes
                 val finalUp = if (calculatedUp > 0) calculatedUp else nativeUpBytes

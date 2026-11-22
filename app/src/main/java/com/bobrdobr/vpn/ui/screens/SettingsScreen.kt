@@ -45,6 +45,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -103,8 +105,10 @@ fun SettingsScreen(
 
     val updateManager = remember { AppUpdateManager.getInstance(context) }
     val updateState by updateManager.updateState.collectAsStateWithLifecycle()
+    val selectedDns by viewModel.selectedDns.collectAsStateWithLifecycle()
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showBypassDialog by remember { mutableStateOf(false) }
+    var showDnsDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         updateManager.manualCheckEvent.collect { result ->
@@ -157,9 +161,30 @@ fun SettingsScreen(
                 title = "Kill Switch",
                 description = "Блокировать незащищенный трафик при падении VPN-соединения",
                 checked = killSwitchEnabled,
-                onCheckedChange = { viewModel.toggleKillSwitch(it) },
+                onCheckedChange = { viewModel.toggleKillSwitch(it, context) },
                 iconColor = NeonEmerald
             )
+
+            if (killSwitchEnabled) {
+                SettingsDivider()
+                SettingsActionItem(
+                    icon = Icons.Default.Security,
+                    title = "Системная блокировка ОС (Always-On)",
+                    description = "Открыть настройки Android для включения постоянной блокировки без VPN",
+                    iconColor = NeonEmerald,
+                    badge = "Android OS",
+                    onClick = {
+                        try {
+                            val intent = Intent(android.provider.Settings.ACTION_VPN_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Не удалось открыть настройки VPN", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
 
             SettingsDivider()
 
@@ -201,6 +226,17 @@ fun SettingsScreen(
                 onCheckedChange = { viewModel.toggleBypass(it, context) },
                 subnetsCount = subnetsList.size,
                 onClick = { showBypassDialog = true }
+            )
+
+            SettingsDivider()
+
+            SettingsActionItem(
+                icon = Icons.Default.Security,
+                title = "DNS-серверы",
+                description = selectedDns,
+                iconColor = NeonCyan,
+                badge = if (selectedDns.contains("по умолчанию")) "AUTO" else "CUSTOM",
+                onClick = { showDnsDialog = true }
             )
         }
 
@@ -310,6 +346,17 @@ fun SettingsScreen(
             onSave = { newSubnets ->
                 viewModel.setBypassSubnets(newSubnets, context)
                 showBypassDialog = false
+            }
+        )
+    }
+
+    if (showDnsDialog) {
+        DnsSelectionDialog(
+            currentDns = selectedDns,
+            onDismiss = { showDnsDialog = false },
+            onSelect = { newDns ->
+                viewModel.setDns(newDns, context)
+                showDnsDialog = false
             }
         )
     }
@@ -791,6 +838,66 @@ private fun BypassSubnetsDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("Отмена", color = TextSecondary)
+            }
+        },
+        containerColor = BackgroundCard,
+        shape = RoundedCornerShape(18.dp)
+    )
+}
+
+@Composable
+private fun DnsSelectionDialog(
+    currentDns: String,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    val dnsOptions = listOf(
+        "DNS из конфигурации туннеля (по умолчанию)",
+        "Cloudflare (1.1.1.1, 1.0.0.1)",
+        "Google (8.8.8.8, 8.8.4.4)",
+        "AdGuard (блокировка рекламы)",
+        "Quad9 (защищенный)"
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Выбор DNS-серверов",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                dnsOptions.forEach { option ->
+                    val isSelected = currentDns == option || (option.startsWith("Cloudflare") && currentDns.contains("Cloudflare"))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(option) }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = { onSelect(option) },
+                            colors = RadioButtonDefaults.colors(selectedColor = NeonCyan)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = option,
+                            style = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Закрыть", color = NeonCyan)
             }
         },
         containerColor = BackgroundCard,

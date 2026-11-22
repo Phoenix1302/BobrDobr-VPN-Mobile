@@ -34,7 +34,8 @@ object TunnelConfigAssembler {
         profile: ServerProfile,
         bypassEnabled: Boolean = false,
         bypassSubnetsRaw: String = "",
-        fallbackDnsSelection: String = "Cloudflare"
+        fallbackDnsSelection: String = "Cloudflare",
+        killSwitchEnabled: Boolean = false
     ): TunnelConfig {
         var baseConfig = profile.toTunnelConfig()
 
@@ -122,7 +123,8 @@ object TunnelConfigAssembler {
         return baseConfig.copy(
             dnsServers = activeDns,
             routes = computedRoutes,
-            bypassSubnets = bypassSubnetsList
+            bypassSubnets = bypassSubnetsList,
+            killSwitchEnabled = killSwitchEnabled
         )
     }
 }

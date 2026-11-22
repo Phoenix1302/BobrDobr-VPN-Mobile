@@ -38,7 +38,8 @@ data class TunnelConfig(
     val disallowedApplications: Set<String> = emptySet(),
     val serverAddress: String = "",
     val serverPort: Int = 443,
-    val rawConfigJson: String = "{}"
+    val rawConfigJson: String = "{}",
+    val killSwitchEnabled: Boolean = false
 ) {
     companion object {
         const val DEFAULT_MTU = 1360
@@ -110,7 +111,8 @@ data class TunnelConfig(
                 disallowedApplications = disallowedSet,
                 serverAddress = obj.optString("serverAddress", ""),
                 serverPort = obj.optInt("serverPort", 443),
-                rawConfigJson = obj.optString("rawConfigJson", "{}")
+                rawConfigJson = obj.optString("rawConfigJson", "{}"),
+                killSwitchEnabled = obj.optBoolean("killSwitchEnabled", false)
             )
         }
     }
@@ -159,6 +161,7 @@ data class TunnelConfig(
         obj.put("serverAddress", serverAddress)
         obj.put("serverPort", serverPort)
         obj.put("rawConfigJson", rawConfigJson)
+        obj.put("killSwitchEnabled", killSwitchEnabled)
         return obj.toString()
     }
 }

@@ -7,6 +7,7 @@ import com.bobrdobr.vpn.ui.model.ServerProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.bobrdobr.vpn.core.security.KeystoreManager
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -14,7 +15,7 @@ import org.json.JSONObject
  * ServerRepository: Central registry managing default gateways, subscription servers,
  * and user-added custom AmneziaWG and AnyConnect profiles.
  */
-class ServerRepository private constructor(context: Context) {
+class ServerRepository private constructor(private val context: Context) {
 
     companion object {
         private const val TAG = "ServerRepository"
@@ -32,7 +33,7 @@ class ServerRepository private constructor(context: Context) {
         }
     }
 
-    private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = KeystoreManager.getInstance(context).getEncryptedPrefs()
 
     private val _customServers = mutableListOf<ServerProfile>()
     private val _subscriptionServers = mutableListOf<ServerProfile>()
@@ -46,6 +47,32 @@ class ServerRepository private constructor(context: Context) {
     }
 
     private fun loadPersistedServers() {
+        // Transparent migration from legacy unencrypted SharedPreferences
+        try {
+            val legacyPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            var migrated = false
+            if (prefs.getString(KEY_CUSTOM_SERVERS, null) == null && legacyPrefs.contains(KEY_CUSTOM_SERVERS)) {
+                val legacyCustom = legacyPrefs.getString(KEY_CUSTOM_SERVERS, null)
+                if (!legacyCustom.isNullOrEmpty()) {
+                    prefs.edit().putString(KEY_CUSTOM_SERVERS, legacyCustom).apply()
+                    migrated = true
+                }
+            }
+            if (prefs.getString(KEY_SUB_SERVERS, null) == null && legacyPrefs.contains(KEY_SUB_SERVERS)) {
+                val legacySub = legacyPrefs.getString(KEY_SUB_SERVERS, null)
+                if (!legacySub.isNullOrEmpty()) {
+                    prefs.edit().putString(KEY_SUB_SERVERS, legacySub).apply()
+                    migrated = true
+                }
+            }
+            if (migrated || legacyPrefs.contains(KEY_CUSTOM_SERVERS) || legacyPrefs.contains(KEY_SUB_SERVERS)) {
+                legacyPrefs.edit().clear().apply()
+                Log.i(TAG, "Migrated legacy server vault to hardware/TEE-backed Keystore storage")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Legacy server vault migration check failed: ${e.message}")
+        }
+
         // 1. Load custom servers
         val customJson = prefs.getString(KEY_CUSTOM_SERVERS, null)
         if (!customJson.isNullOrEmpty()) {

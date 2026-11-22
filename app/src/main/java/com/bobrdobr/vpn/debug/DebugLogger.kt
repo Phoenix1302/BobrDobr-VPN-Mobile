@@ -37,6 +37,7 @@ object DebugLogger {
     private val _isDebugModeEnabled = MutableStateFlow(true)
     val isDebugModeEnabled: StateFlow<Boolean> = _isDebugModeEnabled.asStateFlow()
 
+    private val buffer = ArrayDeque<LogEntry>(MAX_LOGS)
     private val _logsFlow = MutableStateFlow<List<LogEntry>>(emptyList())
     val logsFlow: StateFlow<List<LogEntry>> = _logsFlow.asStateFlow()
 
@@ -62,13 +63,12 @@ object DebugLogger {
             tag = tag,
             message = message
         )
-        synchronized(_logsFlow) {
-            val current = _logsFlow.value.toMutableList()
-            if (current.size >= MAX_LOGS) {
-                current.removeAt(0)
+        synchronized(buffer) {
+            if (buffer.size >= MAX_LOGS) {
+                buffer.removeFirst()
             }
-            current.add(entry)
-            _logsFlow.value = current
+            buffer.addLast(entry)
+            _logsFlow.value = buffer.toList()
         }
     }
 
@@ -78,7 +78,8 @@ object DebugLogger {
     fun error(tag: String, message: String) = log(LogLevel.ERROR, tag, message)
 
     fun clearLogs() {
-        synchronized(_logsFlow) {
+        synchronized(buffer) {
+            buffer.clear()
             _logsFlow.value = emptyList()
         }
         info("DebugLogger", "Терминал логов очищен оператором")

@@ -528,8 +528,8 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeGetTunnelStats(
             static_cast<jlong>(stats.tx_bytes),
             static_cast<jlong>(stats.rx_packets),
             static_cast<jlong>(stats.tx_packets),
-            static_cast<jlong>(stats.rx_speed_bps),
-            static_cast<jlong>(stats.tx_speed_bps),
+            static_cast<jlong>(stats.rx_speed_bps / 8),
+            static_cast<jlong>(stats.tx_speed_bps / 8),
             static_cast<jlong>(stats.ping_ms),
             static_cast<jlong>(stats.last_handshake_timestamp),
             static_cast<jlong>(stats.timestamp)

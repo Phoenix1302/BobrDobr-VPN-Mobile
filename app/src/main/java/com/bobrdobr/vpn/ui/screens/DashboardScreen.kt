@@ -100,7 +100,11 @@ import com.bobrdobr.vpn.ui.components.DesktopTag
 import com.bobrdobr.vpn.ui.components.HydroTelemetryBar
 import com.bobrdobr.vpn.ui.components.ProtocolBadge
 import com.bobrdobr.vpn.ui.components.SubscriptionAlertToast
-import com.bobrdobr.vpn.ui.components.UpdateDialog
+import com.bobrdobr.vpn.ui.components.EasterParticleData
+import com.bobrdobr.vpn.ui.components.EasterParticleItem
+import com.bobrdobr.vpn.ui.components.BigEmojiPopupData
+import com.bobrdobr.vpn.ui.components.EasterBannerData
+import com.bobrdobr.vpn.ui.components.BigEmojiOverlay
 import com.bobrdobr.vpn.subscription.SubscriptionManager
 import com.bobrdobr.vpn.subscription.canConnect
 import com.bobrdobr.vpn.ui.model.ServerProfile
@@ -592,21 +596,6 @@ fun DashboardScreen(
             onDismiss = { showQuickSwitchDialog = false }
         )
     }
-
-    val availableRelease = (updateState as? UpdateState.UpdateAvailable)?.release
-        ?: (updateState as? UpdateState.Downloading)?.release
-        ?: (updateState as? UpdateState.ReadyToInstall)?.release
-
-    if (showUpdateDialog && availableRelease != null) {
-        UpdateDialog(
-            release = availableRelease,
-            updateState = updateState,
-            onDismiss = { showUpdateDialog = false },
-            onDownloadAndInstall = { rel ->
-                updateManager.downloadAndInstall(rel)
-            }
-        )
-    }
 }
 
 @Composable
@@ -776,118 +765,4 @@ private fun QuickServerSwitchDialog(
         tonalElevation = 6.dp,
         shape = RoundedCornerShape(20.dp)
     )
-}
-
-private data class EasterParticleData(
-    val id: Long,
-    val emoji: String,
-    val startX: Float,
-    val startY: Float,
-    val velocityX: Float,
-    val velocityY: Float,
-    val gravity: Float = 0f,
-    val startScale: Float = 1f,
-    val endScale: Float = 1f,
-    val startRotation: Float = 0f,
-    val rotationDelta: Float = 0f,
-    val durationMs: Int = 1200
-)
-
-@Composable
-private fun EasterParticleItem(
-    particle: EasterParticleData,
-    onFinished: () -> Unit
-) {
-    val progress = remember { Animatable(0f) }
-
-    LaunchedEffect(particle.id) {
-        progress.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(
-                durationMillis = particle.durationMs,
-                easing = LinearEasing
-            )
-        )
-        onFinished()
-    }
-
-    val p = progress.value
-    val currentX = particle.startX + particle.velocityX * p
-    val currentY = particle.startY + particle.velocityY * p + 0.5f * particle.gravity * p * p
-    val currentAlpha = (1f - p).coerceIn(0f, 1f)
-    val currentScale = particle.startScale + (particle.endScale - particle.startScale) * p
-    val currentRotation = particle.startRotation + particle.rotationDelta * p
-
-    Text(
-        text = particle.emoji,
-        fontSize = (24 * currentScale).sp,
-        modifier = Modifier
-            .offset { IntOffset(currentX.roundToInt(), currentY.roundToInt()) }
-            .graphicsLayer {
-                rotationZ = currentRotation
-                alpha = currentAlpha
-            }
-    )
-}
-
-private data class BigEmojiPopupData(
-    val id: Long,
-    val emoji: String
-)
-
-private data class EasterBannerData(
-    val title: String,
-    val subtitle: String,
-    val emoji: String,
-    val glowColor: Color,
-    val borderColor: Color
-)
-
-@Composable
-private fun BigEmojiOverlay(
-    popup: BigEmojiPopupData?,
-    onFinished: () -> Unit
-) {
-    if (popup == null) return
-
-    val scale = remember(popup.id) { Animatable(0.2f) }
-    val alpha = remember(popup.id) { Animatable(1f) }
-    val rotation = remember(popup.id) { Animatable(-25f) }
-
-    LaunchedEffect(popup.id) {
-        launch {
-            scale.animateTo(
-                targetValue = 2.8f,
-                animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f)
-            )
-        }
-        launch {
-            rotation.animateTo(
-                targetValue = 15f,
-                animationSpec = tween(700, easing = FastOutSlowInEasing)
-            )
-        }
-        delay(650)
-        alpha.animateTo(
-            targetValue = 0f,
-            animationSpec = tween(500, easing = LinearEasing)
-        )
-        onFinished()
-    }
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = popup.emoji,
-            fontSize = 90.sp,
-            modifier = Modifier.graphicsLayer {
-                scaleX = scale.value
-                scaleY = scale.value
-                rotationZ = rotation.value
-                this.alpha = alpha.value
-            }
-        )
-    }
 }

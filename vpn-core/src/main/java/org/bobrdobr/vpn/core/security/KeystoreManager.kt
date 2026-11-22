@@ -54,6 +54,11 @@ class KeystoreManager(private val context: Context) {
     }
 
     /**
+     * Exposes hardware-backed or TEE-backed EncryptedSharedPreferences for sensitive credential vaults.
+     */
+    fun getEncryptedPrefs(): SharedPreferences = prefs
+
+    /**
      * Initializes preferences with a 3-tier fallback strategy.
      */
     private fun initPreferences(context: Context): SharedPreferences {

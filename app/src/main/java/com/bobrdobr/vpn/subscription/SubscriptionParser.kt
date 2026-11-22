@@ -71,14 +71,14 @@ object SubscriptionParser {
         }
 
         var userId = ""
-        var username = "Egor"
+        var username = "Пользователь"
         var role = "user"
         var expiresAt = 0L
 
         if (root.has("user") && !root.isNull("user")) {
             val userObj = root.getJSONObject("user")
             userId = userObj.optString("id", "")
-            username = userObj.optString("username", "Egor")
+            username = userObj.optString("username", "Пользователь")
             role = userObj.optString("role", "user")
 
             val rawExpires = userObj.opt("expires_at")

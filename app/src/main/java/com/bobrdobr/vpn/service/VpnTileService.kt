@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import org.bobrdobr.vpn.core.model.VpnState
 import org.bobrdobr.vpn.core.service.VpnTunnelService
 import com.bobrdobr.vpn.MainActivity
+import com.bobrdobr.vpn.subscription.canConnect
 import com.bobrdobr.vpn.ui.model.ServerProfile
 
 /**
@@ -77,21 +78,32 @@ class VpnTileService : TileService() {
                         startActivityAndCollapse(appIntent)
                     }
                 } else {
-                    // Permission already granted -> connect to first available server or open app if none configured
+                    // Permission already granted -> connect to selected server or open app if none configured
                     val repo = com.bobrdobr.vpn.repository.ServerRepository.getInstance(this)
-                    val targetServer = repo.allServers.value.firstOrNull()
-                    if (targetServer != null) {
-                        val prefs = getSharedPreferences("bobrdobr_vpn_prefs", Context.MODE_PRIVATE)
+                    val prefs = getSharedPreferences("bobrdobr_vpn_prefs", Context.MODE_PRIVATE)
+                    val servers = repo.allServers.value
+                    val savedServerId = prefs.getString("key_selected_server_id", null)
+                    val targetServer = if (!savedServerId.isNullOrBlank()) {
+                        servers.firstOrNull { it.id == savedServerId } ?: servers.firstOrNull()
+                    } else {
+                        servers.firstOrNull()
+                    }
+
+                    val subManager = com.bobrdobr.vpn.subscription.SubscriptionManager.getInstance(this)
+                    val canConnect = subManager.subscriptionInfo.value.currentStatus.canConnect
+                    if (targetServer != null && (!targetServer.isFromSubscription || canConnect)) {
                         val bypassEnabled = prefs.getBoolean("key_bypass_enabled", false)
                         val bypassSubnets = prefs.getString("key_bypass_subnets", "") ?: ""
                         val selectedDns = prefs.getString("key_selected_dns", "Cloudflare") ?: "Cloudflare"
+                        val killSwitchEnabled = prefs.getBoolean("key_kill_switch_enabled", false)
 
                         val config = com.bobrdobr.vpn.routing.TunnelConfigAssembler.assemble(
                             context = this,
                             profile = targetServer,
                             bypassEnabled = bypassEnabled,
                             bypassSubnetsRaw = bypassSubnets,
-                            fallbackDnsSelection = selectedDns
+                            fallbackDnsSelection = selectedDns,
+                            killSwitchEnabled = killSwitchEnabled
                         )
                         VpnTunnelService.start(this, config)
                     } else {

@@ -148,6 +148,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
     private var lastMeasuredPingMs: Long = 0L
     private var lastNotifiedState: VpnState? = null
     private var activeAssignedIpv4: String? = null
+    private var isUserInitiatedStop = false
     private var activeAssignedPrefix: Int = 24
 
     override fun onCreate() {
@@ -212,6 +213,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
                 watchdogJob?.cancel()
                 val sessionId = sessionCounter.incrementAndGet()
+                isUserInitiatedStop = false
 
                 activeConfig = config
                 _currentConfig = config
@@ -245,6 +247,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
             ACTION_DISCONNECT -> {
                 DebugLogger.i(TAG, "Received ACTION_DISCONNECT. Commencing graceful tunnel shutdown.")
+                isUserInitiatedStop = true
                 stopTunnelGracefully()
             }
 
