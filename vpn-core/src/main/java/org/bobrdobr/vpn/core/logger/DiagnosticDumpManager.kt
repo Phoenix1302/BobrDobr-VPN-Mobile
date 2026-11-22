@@ -38,7 +38,7 @@ object DiagnosticDumpManager {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
             } ?: "0.9.8-prerelease"
         } catch (_: Exception) {
-            "0.9.8-prerelease"
+            "0.9.9-prerelease"
         }
     }
 

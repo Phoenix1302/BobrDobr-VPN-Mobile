@@ -46,16 +46,8 @@ func initTunnelParams() map[string]string {
 	return headers
 }
 
-// SetupTunnel executes AnyConnect HTTP CONNECT command to establish CSTP and DTLS channels
-func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) {
-	headers := initTunnelParams()
-
-	connectUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel"
-	usingCamouflage := auth.Prof.SecretKey != ""
-	if usingCamouflage {
-		connectUrl = auth.Prof.Scheme + auth.Prof.HostWithPort + "/?" + auth.Prof.SecretKey
-	}
-	req, err := http.NewRequest("CONNECT", connectUrl, nil)
+func createConnectRequest(urlStr string, headers map[string]string) (*http.Request, error) {
+	req, err := http.NewRequest("CONNECT", urlStr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CONNECT request: %w", err)
 	}
@@ -66,54 +58,89 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 		} else {
 			req.Host = auth.Prof.SNI
 		}
+	} else if auth.Prof.Host != "" {
+		if auth.Prof.Port != 0 && auth.Prof.Port != 443 {
+			req.Host = fmt.Sprintf("%s:%d", auth.Prof.Host, auth.Prof.Port)
+		} else {
+			req.Host = auth.Prof.Host
+		}
+	}
+
+	utils.SetCommonHeader(req)
+	// CONNECT method carries no body payload; clean up Content-Type to conform to canonical RFC specifications
+	req.Header.Del("Content-Type")
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	return req, nil
+}
+
+func dialTunnelTLS(protectFn utils.ProtectSocketFn) (*tls.UConn, *bufio.Reader, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	serverName := auth.Prof.SNI
+	if serverName == "" {
+		serverName = auth.Prof.Host
+	}
+	conn, err := utils.DialBrowserTLS(ctx, auth.Prof.HostWithPort, serverName, base.Cfg.InsecureSkipVerify, protectFn)
+	if err != nil {
+		return nil, nil, err
+	}
+	bufR := bufio.NewReader(conn)
+	return conn, bufR, nil
+}
+
+// SetupTunnel executes AnyConnect HTTP CONNECT command to establish CSTP and DTLS channels
+func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) {
+	headers := initTunnelParams()
+
+	// Canonical AnyConnect / OpenConnect CSTP tunnel endpoint path is strictly /CSCOSSLC/tunnel
+	connectUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel"
+	req, err := createConnectRequest(connectUrl, headers)
+	if err != nil {
+		return nil, err
 	}
 	base.Info("CONNECT", connectUrl, "Host:", req.Host)
 
-	utils.SetCommonHeader(req)
-	for k, v := range headers {
-		req.Header[k] = []string{v}
-	}
+	var resp *http.Response
+	reusedConn := auth.Conn != nil
 
-	if auth.Conn != nil {
+	if reusedConn {
 		err = req.Write(auth.Conn)
-	}
-
-	if auth.Conn == nil || err != nil {
-		if auth.Conn != nil {
+		if err == nil {
+			resp, err = http.ReadResponse(auth.BufR, req)
+		}
+		if err != nil {
+			base.Warn("Failed to establish CSTP over reused TLS session:", err, "- falling back to fresh TLS connection")
 			_ = auth.Conn.Close()
 			auth.Conn = nil
+			auth.BufR = nil
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
+	}
 
-		serverName := auth.Prof.SNI
-		if serverName == "" {
-			serverName = auth.Prof.Host
-		}
-		auth.Conn, err = utils.DialBrowserTLS(ctx, auth.Prof.HostWithPort, serverName, base.Cfg.InsecureSkipVerify, protectFn)
+	if auth.Conn == nil {
+		auth.Conn, auth.BufR, err = dialTunnelTLS(protectFn)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect for CSTP tunnel: %w", err)
 		}
-		auth.BufR = bufio.NewReader(auth.Conn)
-		err = req.Write(auth.Conn)
-		if err != nil {
+		if err = req.Write(auth.Conn); err != nil {
 			_ = auth.Conn.Close()
 			auth.Conn = nil
 			return nil, fmt.Errorf("failed to send CONNECT: %w", err)
 		}
-	}
-
-	resp, err := http.ReadResponse(auth.BufR, req)
-	if err != nil {
-		if auth.Conn != nil {
+		resp, err = http.ReadResponse(auth.BufR, req)
+		if err != nil {
 			_ = auth.Conn.Close()
 			auth.Conn = nil
+			return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
 		}
-		return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
 	}
 
-	// Fallback retry with camouflage secret if standard path is rejected with 404/405
-	if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) && auth.Prof.SecretKey != "" && !usingCamouflage {
+	// Fallback retry with camouflage secret if a custom reverse proxy rejects standard /CSCOSSLC/tunnel
+	if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) && auth.Prof.SecretKey != "" {
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
@@ -121,30 +148,24 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 			_ = auth.Conn.Close()
 			auth.Conn = nil
 		}
-		base.Info("Standard CSTP path returned", resp.StatusCode, "- attempting retry with camouflage secret")
-		fallbackUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/?" + auth.Prof.SecretKey
-		req2, err2 := http.NewRequest("CONNECT", fallbackUrl, nil)
+		base.Info("Standard CSTP path returned", resp.StatusCode, "- attempting retry with camouflage secret query")
+		fallbackUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel?" + auth.Prof.SecretKey
+		req2, err2 := createConnectRequest(fallbackUrl, headers)
 		if err2 == nil {
-			req2.Host = req.Host
-			utils.SetCommonHeader(req2)
-			for k, v := range headers {
-				req2.Header[k] = []string{v}
-			}
-			ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel2()
-			serverName := auth.Prof.SNI
-			if serverName == "" {
-				serverName = auth.Prof.Host
-			}
-			auth.Conn, err = utils.DialBrowserTLS(ctx2, auth.Prof.HostWithPort, serverName, base.Cfg.InsecureSkipVerify, protectFn)
-			if err == nil {
-				auth.BufR = bufio.NewReader(auth.Conn)
-				if err = req2.Write(auth.Conn); err == nil {
-					resp2, err2 := http.ReadResponse(auth.BufR, req2)
-					if err2 == nil {
+			conn2, bufR2, dialErr := dialTunnelTLS(protectFn)
+			if dialErr == nil {
+				if writeErr := req2.Write(conn2); writeErr == nil {
+					resp2, readErr := http.ReadResponse(bufR2, req2)
+					if readErr == nil {
+						auth.Conn = conn2
+						auth.BufR = bufR2
 						resp = resp2
 						req = req2
+					} else {
+						_ = conn2.Close()
 					}
+				} else {
+					_ = conn2.Close()
 				}
 			}
 		}

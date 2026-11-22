@@ -16,8 +16,8 @@ android {
         applicationId = "com.bobrdobr.vpn"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 98
-        versionName = "0.9.8-prerelease"
+        versionCode = 99
+        versionName = "0.9.9-prerelease"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
