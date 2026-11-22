@@ -72,10 +72,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.bobrdobr.vpn.debug.DebugLogger
-import com.bobrdobr.vpn.debug.DiagnosticDumpManager
-import com.bobrdobr.vpn.debug.LogEntry
-import com.bobrdobr.vpn.debug.LogLevel
+import org.bobrdobr.vpn.core.logger.DebugLogger
+import org.bobrdobr.vpn.core.logger.DiagnosticDumpManager
+import org.bobrdobr.vpn.core.logger.LogEntry
+import org.bobrdobr.vpn.core.logger.LogLevel
 import com.bobrdobr.vpn.ui.theme.BackgroundCard
 import com.bobrdobr.vpn.ui.theme.BackgroundCardActive
 import com.bobrdobr.vpn.ui.theme.BackgroundMain
@@ -748,7 +748,7 @@ private fun SpecDivider() {
 private fun TerminalLogLine(log: LogEntry) {
     val levelColor = when (log.level) {
         LogLevel.INFO -> NeonEmerald
-        LogLevel.DEBUG -> NeonCyan
+        LogLevel.DEBUG, LogLevel.VERBOSE -> NeonCyan
         LogLevel.WARN -> NeonAmber
         LogLevel.ERROR -> NeonRed
     }
@@ -756,7 +756,7 @@ private fun TerminalLogLine(log: LogEntry) {
     Text(
         text = buildAnnotatedString {
             withStyle(SpanStyle(color = TextMuted, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace)) {
-                append("${log.timestamp} ")
+                append("${log.formattedTime} ")
             }
             withStyle(SpanStyle(color = levelColor, fontWeight = FontWeight.Bold, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace)) {
                 append("${log.level.tag} ")

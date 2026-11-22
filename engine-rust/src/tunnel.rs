@@ -20,7 +20,7 @@ pub struct TunnelHandle {
     worker_handle: Option<JoinHandle<()>>,
     telemetry: Arc<TelemetryTracker>,
     is_running: Arc<AtomicBool>,
-    #[allow(dead_code)]
+    network_roamed: Arc<AtomicBool>,
     socket_fd: c_int,
 }
 
@@ -34,9 +34,12 @@ impl TunnelHandle {
     }
 
     pub fn update_network(&self, net_id: i64) -> Result<(), c_int> {
-        log_debug!("update_network: net_id={}", net_id);
-        // Outer socket protection and routing are managed by Android VpnService.protect().
-        Ok(())
+        log_info!("update_network: net_id={}, binding socket fd={}", net_id, self.socket_fd);
+        let res = unsafe { crate::socket::bind_socket_to_network(net_id, self.socket_fd) };
+        if res.is_ok() {
+            self.network_roamed.store(true, Ordering::SeqCst);
+        }
+        res
     }
 
     pub fn stop(&mut self) -> Result<(), c_int> {
@@ -114,9 +117,11 @@ pub fn spawn_tunnel(
 
     let telemetry = Arc::new(TelemetryTracker::new());
     let is_running = Arc::new(AtomicBool::new(true));
+    let network_roamed = Arc::new(AtomicBool::new(false));
 
     let t_telemetry = telemetry.clone();
     let t_is_running = is_running.clone();
+    let t_network_roamed = network_roamed.clone();
 
     let worker_handle = std::thread::Builder::new()
         .name("bobrdobr-tun-loop".to_string())
@@ -129,6 +134,7 @@ pub fn spawn_tunnel(
                 status_cb,
                 t_telemetry,
                 t_is_running,
+                t_network_roamed,
             );
         })
         .map_err(|e| {
@@ -145,6 +151,7 @@ pub fn spawn_tunnel(
         worker_handle: Some(worker_handle),
         telemetry,
         is_running,
+        network_roamed,
         socket_fd: socket_raw_fd,
     })
 }
@@ -157,6 +164,7 @@ fn run_packet_loop(
     status_cb: StatusCallbackFn,
     telemetry: Arc<TelemetryTracker>,
     is_running: Arc<AtomicBool>,
+    network_roamed: Arc<AtomicBool>,
 ) {
     log_info!("Packet loop started (tun_fd={}, udp_fd={})", tun_dev.fd(), udp_socket.fd());
 
@@ -232,6 +240,16 @@ fn run_packet_loop(
                 }
             }
             send_handshake_initiation(&mut session, &udp_socket, &config, &telemetry);
+        }
+
+        // Network roaming check (Wi-Fi <-> Cellular handoff)
+        if network_roamed.swap(false, Ordering::SeqCst) {
+            log_info!("Network roamed: sending immediate WireGuard keepalive/handshake on new route");
+            if session.current_keypair.is_some() {
+                send_keepalive(&mut session, &udp_socket, &config, &telemetry, &mut udp_out_buf);
+            } else {
+                send_handshake_initiation(&mut session, &udp_socket, &config, &telemetry);
+            }
         }
 
         // Keepalive check (WireGuard sends 0-byte payload encrypted)

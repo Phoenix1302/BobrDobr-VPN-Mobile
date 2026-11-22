@@ -54,6 +54,7 @@ class SubscriptionManager private constructor(private val context: Context) {
 
         private const val USER_AGENT = "BobrDobr-VPN/1.0.0 (Android)"
         private const val TIMEOUT_MS = 15000
+        private const val MAX_RESPONSE_BYTES = 5 * 1024 * 1024 // 5 MB ceiling to prevent OOM
 
         @Volatile
         private var instance: SubscriptionManager? = null
@@ -136,7 +137,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                             headerExpireSec = match?.groupValues?.get(1)?.toLongOrNull()
                         }
 
-                        val body = connection.inputStream.bufferedReader().use { it.readText() }
+                        val body = connection.inputStream.readBoundedText()
                         val info = SubscriptionParser.parse(body, normalizedUrl, headerExpireSec)
 
                         // Enforce lifecycle rules (disconnect tunnel if expired)
@@ -180,7 +181,7 @@ class SubscriptionManager private constructor(private val context: Context) {
 
                     HttpURLConnection.HTTP_UNAUTHORIZED -> {
                         val errorStream = connection.errorStream
-                        val errBody = errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                        val errBody = errorStream?.readBoundedText().orEmpty()
                         val errJson = try { JSONObject(errBody) } catch (_: Exception) { null }
                         val rawMsg = errJson?.optString("error", errBody) ?: errBody
                         val err = if (rawMsg.isNotBlank()) rawMsg else "Токен подписки отозван или недействителен (HTTP 401)"
@@ -193,7 +194,7 @@ class SubscriptionManager private constructor(private val context: Context) {
 
                     HttpURLConnection.HTTP_FORBIDDEN -> {
                         val errorStream = connection.errorStream
-                        val errBody = errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                        val errBody = errorStream?.readBoundedText().orEmpty()
                         val errJson = try { JSONObject(errBody) } catch (_: Exception) { null }
                         val rawMsg = errJson?.optString("error", errBody) ?: errBody
                         val isBlocked = rawMsg.contains("blocked", ignoreCase = true) ||
@@ -211,7 +212,7 @@ class SubscriptionManager private constructor(private val context: Context) {
 
                     else -> {
                         val errorStream = connection.errorStream
-                        val errBody = errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                        val errBody = errorStream?.readBoundedText() ?: ""
                         val err = "Ошибка сервера подписки (HTTP $responseCode): $errBody"
                         Log.e(TAG, err)
                         _syncError.value = err
@@ -498,6 +499,23 @@ class SubscriptionManager private constructor(private val context: Context) {
             periodicWork
         )
         Log.i(TAG, "Scheduled periodic subscription synchronization (6h interval)")
+    }
+
+    private fun java.io.InputStream.readBoundedText(maxBytes: Int = MAX_RESPONSE_BYTES): String {
+        return this.bufferedReader(Charsets.UTF_8).use { reader ->
+            val buffer = CharArray(4096)
+            val out = StringBuilder()
+            var totalChars = 0
+            var readChars: Int
+            while (reader.read(buffer).also { readChars = it } != -1) {
+                totalChars += readChars
+                if (totalChars > maxBytes) {
+                    throw IllegalStateException("HTTP response exceeds maximum allowed size ($maxBytes bytes)")
+                }
+                out.append(buffer, 0, readChars)
+            }
+            out.toString()
+        }
     }
 }
 

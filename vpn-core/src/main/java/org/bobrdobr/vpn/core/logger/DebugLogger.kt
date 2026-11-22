@@ -15,30 +15,36 @@ import java.util.concurrent.CopyOnWriteArrayList
 /**
  * Log severity levels for BobrDobr VPN debug subsystem.
  */
-enum class LogLevel {
-    VERBOSE,
-    DEBUG,
-    INFO,
-    WARN,
-    ERROR
+enum class LogLevel(val tag: String) {
+    VERBOSE("[VERB]"),
+    DEBUG("[DEBUG]"),
+    INFO("[INFO]"),
+    WARN("[WARN]"),
+    ERROR("[ERROR]")
 }
 
 /**
  * Single structured log entry with millisecond precision timestamp.
  */
 data class LogEntry(
+    val id: Long = nextId(),
     val timestamp: Long = System.currentTimeMillis(),
     val level: LogLevel,
     val tag: String,
     val message: String,
     val throwable: Throwable? = null
 ) {
+    val formattedTime: String
+        get() = Instant.ofEpochMilli(timestamp)
+            .atZone(ZoneId.systemDefault())
+            .format(TIME_FORMATTER)
+
     fun toFormattedString(formatter: DateTimeFormatter = DEFAULT_FORMATTER): String {
         val dateStr = Instant.ofEpochMilli(timestamp)
             .atZone(ZoneId.systemDefault())
             .format(formatter)
-        val lvlChar = level.name.first()
-        val base = "[$dateStr] [$lvlChar] [$tag] $message"
+        val lvlTag = level.tag
+        val base = "[$dateStr] $lvlTag [$tag] $message"
         return if (throwable != null) {
             "$base\n${Log.getStackTraceString(throwable)}"
         } else {
@@ -47,7 +53,11 @@ data class LogEntry(
     }
 
     companion object {
+        private val idSequence = java.util.concurrent.atomic.AtomicLong(0L)
+        fun nextId(): Long = idSequence.incrementAndGet()
+
         val DEFAULT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+        val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS", Locale.US)
     }
 }
 
@@ -75,11 +85,14 @@ object DebugLogger {
     private val _isDebugModeEnabled = MutableStateFlow(true)
     val isDebugModeEnabled: StateFlow<Boolean> = _isDebugModeEnabled.asStateFlow()
 
+    private var appContext: Context? = null
+
     /**
      * Initializes logger preferences from persistent storage.
      * Defaults to enabled (true) for pre-release diagnostics.
      */
     fun init(context: Context) {
+        appContext = context.applicationContext
         try {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val enabled = prefs.getBoolean(KEY_DEBUG_ENABLED, true)
@@ -90,13 +103,22 @@ object DebugLogger {
     /**
      * Toggles extended debug logging mode and persists user preference.
      */
-    fun setDebugMode(context: Context, enabled: Boolean) {
+    fun setDebugMode(enabled: Boolean) {
         _isDebugModeEnabled.value = enabled
-        try {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.edit().putBoolean(KEY_DEBUG_ENABLED, enabled).apply()
-        } catch (_: Exception) {}
+        appContext?.let { ctx ->
+            try {
+                val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.edit().putBoolean(KEY_DEBUG_ENABLED, enabled).apply()
+            } catch (_: Exception) {}
+        }
     }
+
+    fun setDebugMode(context: Context, enabled: Boolean) {
+        appContext = context.applicationContext
+        setDebugMode(enabled)
+    }
+
+    fun getAllLogsText(): String = getLogsAsText()
 
     fun v(tag: String, message: String) {
         Log.v(tag, message)

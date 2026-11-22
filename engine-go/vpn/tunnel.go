@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	tls "github.com/refraction-networking/utls"
@@ -149,7 +150,7 @@ func SetupTunnel(protectFn utils.ProtectSocketFn) (*session.ConnSession, error) 
 			auth.Conn = nil
 		}
 		base.Info("Standard CSTP path returned", resp.StatusCode, "- attempting retry with camouflage secret query")
-		fallbackUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel?" + auth.Prof.SecretKey
+		fallbackUrl := auth.Prof.Scheme + auth.Prof.HostWithPort + "/CSCOSSLC/tunnel?" + url.QueryEscape(auth.Prof.SecretKey)
 		req2, err2 := createConnectRequest(fallbackUrl, headers)
 		if err2 == nil {
 			conn2, bufR2, dialErr := dialTunnelTLS(protectFn)

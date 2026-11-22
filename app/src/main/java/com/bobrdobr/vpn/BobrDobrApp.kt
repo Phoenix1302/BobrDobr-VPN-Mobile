@@ -2,9 +2,7 @@ package com.bobrdobr.vpn
 
 import android.app.Application
 import com.bobrdobr.vpn.subscription.SubscriptionManager
-import org.bobrdobr.vpn.core.logger.DebugLogger as CoreLogger
-import com.bobrdobr.vpn.debug.DebugLogger as UiLogger
-import com.bobrdobr.vpn.debug.LogLevel as UiLogLevel
+import org.bobrdobr.vpn.core.logger.DebugLogger
 
 class BobrDobrApp : Application() {
 
@@ -14,30 +12,18 @@ class BobrDobrApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        CoreLogger.init(this)
+        DebugLogger.init(this)
 
-        // Bridge native and VPN core logs into the UI real-time terminal
-        CoreLogger.addLogListener { entry ->
-            val uiLevel = when (entry.level) {
-                org.bobrdobr.vpn.core.logger.LogLevel.VERBOSE,
-                org.bobrdobr.vpn.core.logger.LogLevel.DEBUG -> UiLogLevel.DEBUG
-                org.bobrdobr.vpn.core.logger.LogLevel.INFO -> UiLogLevel.INFO
-                org.bobrdobr.vpn.core.logger.LogLevel.WARN -> UiLogLevel.WARN
-                org.bobrdobr.vpn.core.logger.LogLevel.ERROR -> UiLogLevel.ERROR
-            }
-            UiLogger.log(uiLevel, entry.tag, entry.message)
-        }
-
-        CoreLogger.i(TAG, "BobrDobrApp initialized (v${BuildConfig.VERSION_NAME}, build ${BuildConfig.VERSION_CODE})")
+        DebugLogger.i(TAG, "BobrDobrApp initialized (v${BuildConfig.VERSION_NAME}, build ${BuildConfig.VERSION_CODE})")
 
         // Schedule background subscription synchronization with full crash immunity
         try {
             val subManager = SubscriptionManager.getInstance(this)
             subManager.schedulePeriodicSync(this)
             subManager.syncQuietlyIfOnline()
-            CoreLogger.i(TAG, "Background subscription sync scheduled and cold start check launched successfully")
+            DebugLogger.i(TAG, "Background subscription sync scheduled and cold start check launched successfully")
         } catch (t: Throwable) {
-            CoreLogger.e(TAG, "Failed to schedule background WorkManager sync during startup: ${t.message}", t)
+            DebugLogger.e(TAG, "Failed to schedule background WorkManager sync during startup: ${t.message}", t)
         }
     }
 }

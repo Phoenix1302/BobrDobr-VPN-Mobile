@@ -1,7 +1,7 @@
 //! Protected UDP Transport Socket with Android routing loop prevention.
 
 use crate::api::*;
-use crate::{log_debug, log_error, log_info};
+use crate::{log_debug, log_error, log_info, log_warn};
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::raw::c_int;
@@ -140,10 +140,8 @@ impl ProtectedUdpSocket {
 
     /// Update network association (e.g. Wi-Fi <-> Cellular handoff)
     pub fn update_network(&self, net_id: i64) -> Result<(), c_int> {
-        log_debug!("Updating network binding for UDP socket fd={} to net_id={}", self.fd, net_id);
-        // Note: SO_MARK requires CAP_NET_ADMIN which is not available to Android user apps (EPERM os error 1).
-        // Socket protection and network binding are managed outside by Android VpnService.protect(fd).
-        Ok(())
+        log_info!("Updating network binding for UDP socket fd={} to net_id={}", self.fd, net_id);
+        unsafe { bind_socket_to_network(net_id, self.fd) }
     }
 
     #[inline(always)]
@@ -187,5 +185,39 @@ impl Drop for ProtectedUdpSocket {
             log_debug!("Closing protected UDP socket fd={}", self.fd);
             unsafe { libc::close(self.fd) };
         }
+    }
+}
+
+/// Dynamically binds a socket file descriptor to an Android network handle.
+/// Uses `android_setsocknetwork` from `libandroid.so` if running on Android.
+pub unsafe fn bind_socket_to_network(net_id: i64, fd: c_int) -> Result<(), c_int> {
+    if net_id <= 0 || fd < 0 {
+        return Ok(());
+    }
+    #[cfg(target_os = "android")]
+    {
+        type AndroidSetSockNetworkFn = unsafe extern "C" fn(net_handle: i64, fd: c_int) -> c_int;
+        let sym = libc::dlsym(libc::RTLD_DEFAULT, b"android_setsocknetwork\0".as_ptr() as *const _);
+        if !sym.is_null() {
+            let f: AndroidSetSockNetworkFn = std::mem::transmute(sym);
+            let res = f(net_id, fd);
+            if res == 0 {
+                log_info!("Successfully bound socket fd={} to network net_id={}", fd, net_id);
+                Ok(())
+            } else {
+                let err = std::io::Error::last_os_error();
+                log_warn!("android_setsocknetwork failed for fd={} net_id={}: {}", fd, net_id, err);
+                Err(res)
+            }
+        } else {
+            log_warn!("android_setsocknetwork not found in runtime libandroid");
+            Ok(())
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = net_id;
+        let _ = fd;
+        Ok(())
     }
 }

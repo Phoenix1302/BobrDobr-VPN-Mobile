@@ -145,6 +145,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var pingMonitorJob: Job? = null
     private var watchdogJob: Job? = null
+    private var connectJob: Job? = null
     private var lastMeasuredPingMs: Long = 0L
     private var lastNotifiedState: VpnState? = null
     private var activeAssignedIpv4: String? = null
@@ -191,7 +192,19 @@ class VpnTunnelService : VpnService(), SocketProtector {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action ?: return START_NOT_STICKY
+        if (intent == null) {
+            DebugLogger.w(TAG, "onStartCommand intent is null (process restart by OS)")
+            val cfg = _currentConfig
+            if (!isUserInitiatedStop && cfg != null) {
+                DebugLogger.i(TAG, "Restoring tunnel after process restart for ${cfg.serverName}")
+                start(this, cfg)
+                return START_STICKY
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val action = intent.action ?: return START_NOT_STICKY
         DebugLogger.i(TAG, "onStartCommand action: $action, flags=$flags, startId=$startId")
 
         when (action) {
@@ -211,6 +224,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
                     return START_NOT_STICKY
                 }
 
+                connectJob?.cancel()
                 watchdogJob?.cancel()
                 val sessionId = sessionCounter.incrementAndGet()
                 isUserInitiatedStop = false
@@ -224,10 +238,17 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
                 startForegroundNotification(VpnState.Connecting(config.protocol, config.serverName))
 
-                serviceScope.launch(Dispatchers.IO) {
+                connectJob = serviceScope.launch(Dispatchers.IO) {
                     tunnelMutex.withLock {
+                        if (!isActive || sessionId != sessionCounter.get()) {
+                            DebugLogger.w(TAG, "Connect job cancelled before lock acquisition (session=$sessionId)")
+                            return@withLock
+                        }
                         try {
                             establishTunnel(config, sessionId)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            DebugLogger.i(TAG, "Connection job cancelled during establishment (session=$sessionId)")
+                            throw e
                         } catch (e: Exception) {
                             DebugLogger.e(TAG, "Failed to establish tunnel: ${e.message}", e)
                             if (sessionId == sessionCounter.get()) {
@@ -248,6 +269,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
             ACTION_DISCONNECT -> {
                 DebugLogger.i(TAG, "Received ACTION_DISCONNECT. Commencing graceful tunnel shutdown.")
                 isUserInitiatedStop = true
+                connectJob?.cancel()
+                connectJob = null
                 stopTunnelGracefully()
             }
 
@@ -258,14 +281,18 @@ class VpnTunnelService : VpnService(), SocketProtector {
             }
         }
 
-        return START_NOT_STICKY
+        return if (_vpnState.value is VpnState.Connected || _vpnState.value is VpnState.Connecting) {
+            START_STICKY
+        } else {
+            START_NOT_STICKY
+        }
     }
 
     /**
      * Pre-resolves server domain name into an IPv4 address using the active physical network,
      * bypassing the TUN interface to prevent DNS resolution deadlocks.
      */
-    private fun resolvePhysicalServerIp(host: String): String? {
+    private suspend fun resolvePhysicalServerIp(host: String): String? {
         if (host.isBlank()) return null
         if (host.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
             return host
@@ -305,7 +332,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
             }
 
             if (attempt < 3) {
-                try { Thread.sleep(200) } catch (_: Exception) {}
+                delay(200L)
             }
         }
 
@@ -464,7 +491,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
      * or prepares 2-phase dynamic initialization callback for OpenConnect,
      * and delegates control to [NativeEngineController].
      */
-    private fun establishTunnel(config: TunnelConfig, sessionId: Long) {
+    private suspend fun establishTunnel(config: TunnelConfig, sessionId: Long) {
         if (sessionId != sessionCounter.get()) {
             DebugLogger.w(TAG, "Session ID mismatch ($sessionId vs ${sessionCounter.get()}), aborting establishTunnel")
             return
@@ -845,6 +872,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
     private fun stopTunnelGracefully() {
         DebugLogger.i(TAG, "stopTunnelGracefully: tearing down session")
+        connectJob?.cancel()
+        connectJob = null
         stopPingMonitor()
         watchdogJob?.cancel()
         watchdogJob = null
@@ -882,6 +911,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
     override fun onDestroy() {
         DebugLogger.i(TAG, "VpnTunnelService onDestroy()")
 
+        connectJob?.cancel()
+        connectJob = null
         stopPingMonitor()
         watchdogJob?.cancel()
         watchdogJob = null
@@ -949,9 +980,10 @@ class VpnTunnelService : VpnService(), SocketProtector {
         pingMonitorJob = serviceScope.launch(Dispatchers.IO) {
             val clientIp = activeAssignedIpv4 ?: config.ipv4Address
             val prefix = if (activeAssignedPrefix in 1..32) activeAssignedPrefix else config.ipv4Prefix
-            val gatewayIp = calculateInTunnelGatewayIp(clientIp, prefix)
+            val gatewayIp = config.dnsServers.firstOrNull { it.contains(".") }
+                ?: calculateInTunnelGatewayIp(clientIp, prefix)
 
-            DebugLogger.i(TAG, "Starting In-Tunnel gateway ping monitor to calculated gateway $gatewayIp (client: $clientIp/$prefix, 3s interval)")
+            DebugLogger.i(TAG, "Starting In-Tunnel gateway ping monitor to target $gatewayIp (client: $clientIp/$prefix, 3s interval)")
 
             while (isActive) {
                 delay(3000L)

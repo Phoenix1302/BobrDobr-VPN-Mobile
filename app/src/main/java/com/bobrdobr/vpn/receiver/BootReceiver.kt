@@ -11,7 +11,9 @@ import com.bobrdobr.vpn.subscription.SubscriptionManager
 import com.bobrdobr.vpn.subscription.canConnect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.bobrdobr.vpn.core.service.VpnTunnelService
 
 /**
@@ -57,42 +59,46 @@ class BootReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val subManager = SubscriptionManager.getInstance(context)
-                val repo = ServerRepository.getInstance(context)
-                val servers = repo.allServers.value
+                withTimeout(15_000L) {
+                    val subManager = SubscriptionManager.getInstance(context)
+                    val repo = ServerRepository.getInstance(context)
+                    val servers = repo.allServers.value
 
-                val savedServerId = prefs.getString(KEY_SELECTED_SERVER_ID, null)
-                val targetServer = if (!savedServerId.isNullOrBlank()) {
-                    servers.firstOrNull { it.id == savedServerId } ?: servers.firstOrNull()
-                } else {
-                    servers.firstOrNull()
+                    val savedServerId = prefs.getString(KEY_SELECTED_SERVER_ID, null)
+                    val targetServer = if (!savedServerId.isNullOrBlank()) {
+                        servers.firstOrNull { it.id == savedServerId } ?: servers.firstOrNull()
+                    } else {
+                        servers.firstOrNull()
+                    }
+
+                    if (targetServer == null) {
+                        Log.w(TAG, "No server profile configured. Cannot auto-connect on boot.")
+                        return@withTimeout
+                    }
+
+                    // If target server is from subscription, verify that subscription is active and allowed to connect
+                    if (targetServer.isFromSubscription && !subManager.subscriptionInfo.value.currentStatus.canConnect) {
+                        Log.w(TAG, "Subscription is expired or blocked. Auto-connect blocked.")
+                        return@withTimeout
+                    }
+
+                    val bypassEnabled = prefs.getBoolean(KEY_BYPASS_ENABLED, false)
+                    val bypassSubnets = prefs.getString(KEY_BYPASS_SUBNETS, "") ?: ""
+                    val selectedDns = prefs.getString(KEY_SELECTED_DNS, "Cloudflare") ?: "Cloudflare"
+
+                    val config = TunnelConfigAssembler.assemble(
+                        context = context,
+                        profile = targetServer,
+                        bypassEnabled = bypassEnabled,
+                        bypassSubnetsRaw = bypassSubnets,
+                        fallbackDnsSelection = selectedDns
+                    )
+
+                    Log.i(TAG, "Auto-connecting to server '${targetServer.name}' on boot...")
+                    VpnTunnelService.start(context, config)
                 }
-
-                if (targetServer == null) {
-                    Log.w(TAG, "No server profile configured. Cannot auto-connect on boot.")
-                    return@launch
-                }
-
-                // If target server is from subscription, verify that subscription is active and allowed to connect
-                if (targetServer.isFromSubscription && !subManager.subscriptionInfo.value.currentStatus.canConnect) {
-                    Log.w(TAG, "Subscription is expired or blocked. Auto-connect blocked.")
-                    return@launch
-                }
-
-                val bypassEnabled = prefs.getBoolean(KEY_BYPASS_ENABLED, false)
-                val bypassSubnets = prefs.getString(KEY_BYPASS_SUBNETS, "") ?: ""
-                val selectedDns = prefs.getString(KEY_SELECTED_DNS, "Cloudflare") ?: "Cloudflare"
-
-                val config = TunnelConfigAssembler.assemble(
-                    context = context,
-                    profile = targetServer,
-                    bypassEnabled = bypassEnabled,
-                    bypassSubnetsRaw = bypassSubnets,
-                    fallbackDnsSelection = selectedDns
-                )
-
-                Log.i(TAG, "Auto-connecting to server '${targetServer.name}' on boot...")
-                VpnTunnelService.start(context, config)
+            } catch (e: TimeoutCancellationException) {
+                Log.e(TAG, "Auto-connect on boot timed out after 15 seconds")
             } catch (t: Throwable) {
                 Log.e(TAG, "Failed to auto-connect on boot: ${t.message}", t)
             } finally {

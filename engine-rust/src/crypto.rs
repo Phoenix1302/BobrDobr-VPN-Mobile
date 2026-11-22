@@ -190,6 +190,9 @@ pub fn aead_decrypt_in_place(
     if ciphertext_len < 16 {
         return Err("Ciphertext too short".to_string());
     }
+    if buffer.len() < ciphertext_len {
+        return Err("Buffer length smaller than ciphertext length".to_string());
+    }
     let plaintext_len = ciphertext_len - 16;
     let tag = Tag::clone_from_slice(&buffer[plaintext_len..ciphertext_len]);
 
