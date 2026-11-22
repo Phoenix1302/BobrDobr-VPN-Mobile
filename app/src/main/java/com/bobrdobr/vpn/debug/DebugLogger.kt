@@ -1,6 +1,7 @@
 package com.bobrdobr.vpn.debug
 
 import android.os.Build
+import com.bobrdobr.vpn.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -88,7 +89,7 @@ object DebugLogger {
     }
 
     private fun logInitialSystemInfo() {
-        info("System", "Инициализация подсистемы отладки BobrDobr VPN Mobile v0.9.6-prerelease")
+        info("System", "Инициализация подсистемы отладки BobrDobr VPN Mobile v${BuildConfig.VERSION_NAME}")
         info("Platform", "Android SDK ${Build.VERSION.SDK_INT} (${Build.VERSION.RELEASE}), Устройство: ${Build.MANUFACTURER} ${Build.MODEL}")
         info("ABIs", "Поддерживаемые ABI: ${Build.SUPPORTED_ABIS.joinToString(", ")}")
         info("Alignment", "Выравнивание ELF LOAD 16 KB (0x4000): УСПЕШНО")

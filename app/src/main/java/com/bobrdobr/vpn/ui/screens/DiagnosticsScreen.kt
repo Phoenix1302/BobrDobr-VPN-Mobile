@@ -2,6 +2,7 @@ package com.bobrdobr.vpn.ui.screens
 
 import android.os.Build
 import android.widget.Toast
+import com.bobrdobr.vpn.BuildConfig
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -187,7 +188,7 @@ fun DiagnosticsScreen(
 
         DiagnosticsCard {
             Column(modifier = Modifier.padding(16.dp)) {
-                ComponentSpecRow("Клиент", "BobrDobr VPN Mobile v0.9.6-prerelease (Сборка 96)", NeonCyan)
+                ComponentSpecRow("Клиент", "BobrDobr VPN Mobile v${BuildConfig.VERSION_NAME} (Сборка ${BuildConfig.VERSION_CODE})", NeonCyan)
                 SpecDivider()
                 ComponentSpecRow("Базовая платформа", "Android Target SDK 35 (Android 15 Ready) / Min SDK 26", TextPrimary)
                 SpecDivider()

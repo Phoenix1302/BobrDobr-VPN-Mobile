@@ -3,6 +3,7 @@ package com.bobrdobr.vpn.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import com.bobrdobr.vpn.BuildConfig
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -109,7 +110,7 @@ fun SettingsScreen(
         updateManager.manualCheckEvent.collect { result ->
             when (result) {
                 is AppUpdateManager.ManualCheckResult.UpToDate -> {
-                    Toast.makeText(context, "У вас установлена последняя версия (v0.9.6-prerelease)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "У вас установлена последняя версия (v${BuildConfig.VERSION_NAME})", Toast.LENGTH_SHORT).show()
                 }
                 is AppUpdateManager.ManualCheckResult.Available -> {
                     showUpdateDialog = true
@@ -212,9 +213,9 @@ fun SettingsScreen(
             SettingsActionItem(
                 icon = Icons.Default.Info,
                 title = "БобрДобр VPN Mobile",
-                description = "v0.9.6-prerelease (Сборка 96) • Android ARM64 • x86_64",
+                description = "v${BuildConfig.VERSION_NAME} (Сборка ${BuildConfig.VERSION_CODE}) • Android ARM64 • x86_64",
                 iconColor = NeonCyan,
-                badge = "v0.9.6",
+                badge = "v${BuildConfig.VERSION_NAME.removeSuffix("-prerelease")}",
                 onClick = {
                     viewModel.setNavigationTab(com.bobrdobr.vpn.ui.viewmodel.NavigationTab.DIAGNOSTICS)
                 }

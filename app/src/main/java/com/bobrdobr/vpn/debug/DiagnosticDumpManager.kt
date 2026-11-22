@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.bobrdobr.vpn.BuildConfig
 import com.bobrdobr.vpn.repository.ServerRepository
 import com.bobrdobr.vpn.split.SplitTunnelManager
 import org.bobrdobr.vpn.core.service.VpnTunnelService
@@ -42,12 +43,12 @@ object DiagnosticDumpManager {
             }
         } catch (_: Exception) { null }
 
-        val versionName = pkgInfo?.versionName ?: "0.9.6-prerelease"
+        val versionName = pkgInfo?.versionName ?: BuildConfig.VERSION_NAME
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            pkgInfo?.longVersionCode ?: 95L
+            pkgInfo?.longVersionCode ?: BuildConfig.VERSION_CODE.toLong()
         } else {
             @Suppress("DEPRECATION")
-            (pkgInfo?.versionCode?.toLong() ?: 95L)
+            (pkgInfo?.versionCode?.toLong() ?: BuildConfig.VERSION_CODE.toLong())
         }
         val targetSdk = context.applicationInfo.targetSdkVersion
         val minSdk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) context.applicationInfo.minSdkVersion else 26
@@ -122,7 +123,7 @@ object DiagnosticDumpManager {
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, "BobrDobr VPN Diagnostic Dump ($timestamp)")
-                putExtra(Intent.EXTRA_TEXT, "Диагностический дамп BobrDobr VPN Mobile v0.9.6-prerelease\nФайл прикреплен.")
+                putExtra(Intent.EXTRA_TEXT, "Диагностический дамп BobrDobr VPN Mobile v${BuildConfig.VERSION_NAME}\nФайл прикреплен.")
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
