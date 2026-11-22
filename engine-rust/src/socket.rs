@@ -1,7 +1,7 @@
 //! Protected UDP Transport Socket with Android routing loop prevention.
 
 use crate::api::*;
-use crate::{log_debug, log_error, log_info, log_warn};
+use crate::{log_debug, log_error, log_info};
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::raw::c_int;
@@ -206,18 +206,18 @@ pub unsafe fn bind_socket_to_network(net_id: i64, fd: c_int) -> Result<(), c_int
                 Ok(())
             } else {
                 let err = std::io::Error::last_os_error();
-                log_warn!("android_setsocknetwork failed for fd={} net_id={}: {}", fd, net_id, err);
+                crate::log_warn!("android_setsocknetwork failed for fd={} net_id={}: {}", fd, net_id, err);
                 Err(res)
             }
         } else {
-            log_warn!("android_setsocknetwork not found in runtime libandroid");
-            Ok(())
+            crate::log_warn!("android_setsocknetwork not found in runtime libandroid");
+            Err(ENGINE_ERR_GENERIC)
         }
     }
     #[cfg(not(target_os = "android"))]
     {
         let _ = net_id;
         let _ = fd;
-        Ok(())
+        Err(ENGINE_ERR_GENERIC)
     }
 }

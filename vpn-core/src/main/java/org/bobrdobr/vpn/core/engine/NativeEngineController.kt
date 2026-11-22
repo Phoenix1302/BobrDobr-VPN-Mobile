@@ -23,7 +23,7 @@ import org.bobrdobr.vpn.core.service.SocketProtector
  */
 class NativeEngineController(
     private val scope: CoroutineScope,
-    private val onStateChanged: (VpnState) -> Unit,
+    private val onStateChanged: (Long, VpnState) -> Unit,
     private val onStatsUpdated: (TunnelStats) -> Unit
 ) {
     companion object {
@@ -38,7 +38,7 @@ class NativeEngineController(
     private val sessionGeneration = AtomicLong(0)
     private val lifecycleLock = ReentrantLock()
 
-    private fun statusListenerFor(generation: Long) = JniBridge.StatusListener { statusCode, message ->
+    private fun statusListenerFor(generation: Long, sessionId: Long) = JniBridge.StatusListener { statusCode, message ->
         val currentProtocol: VpnProtocol
         val currentServer: String?
         synchronized(lock) {
@@ -70,7 +70,7 @@ class NativeEngineController(
             DebugLogger.d(TAG, "Ignoring stale callback before dispatch: generation=$generation current=${sessionGeneration.get()}")
             return@StatusListener
         }
-        onStateChanged(newState)
+        onStateChanged(sessionId, newState)
     }
 
     /**
@@ -84,7 +84,7 @@ class NativeEngineController(
         config: TunnelConfig,
         tunFd: Int,
         protector: SocketProtector,
-        tunConfigCallback: JniBridge.TunConfigCallback? = null
+        tunConfigCallback: JniBridge.TunConfigCallback?, sessionId: Long
     ): Result<Unit> = lifecycleLock.withLock {
         DebugLogger.i(TAG, "startTunnel requested: protocol=${config.protocol.displayName}, server='${config.serverName}', tunFd=$tunFd")
 
@@ -99,11 +99,11 @@ class NativeEngineController(
             engine = when (config.protocol) {
                 VpnProtocol.AMNEZIA_WG, VpnProtocol.WIREGUARD -> {
                     DebugLogger.i(TAG, "Instantiating RustVpnEngine for ${config.protocol.displayName}")
-                    RustVpnEngine(statusListenerFor(generation))
+                    RustVpnEngine(statusListenerFor(generation, sessionId))
                 }
                 VpnProtocol.OPENCONNECT -> {
                     DebugLogger.i(TAG, "Instantiating GoVpnEngine for ${config.protocol.displayName}")
-                    GoVpnEngine(statusListenerFor(generation))
+                    GoVpnEngine(statusListenerFor(generation, sessionId))
                 }
             }
 

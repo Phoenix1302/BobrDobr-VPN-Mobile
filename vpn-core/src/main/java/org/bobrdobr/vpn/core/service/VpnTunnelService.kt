@@ -10,8 +10,11 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
@@ -52,7 +55,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Implements Android [VpnService] and [SocketProtector].
  * Manages foreground service lifecycle, notification updates, TUN descriptor capture via
- * ParcelFileDescriptor.detachFd(), seamless network roaming without TUN re-creation,
+ * ParcelFileDescriptor.detachFd(), network-aware transport reconnection,
  * 2-phase dynamic TUN initialization for CSTP, and routing loop prevention via VpnService.protect(fd).
  */
 class VpnTunnelService : VpnService(), SocketProtector {
@@ -137,7 +140,10 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
     private var activeConfig: TunnelConfig? = null
     private var currentPhysicalNetwork: Network? = null
-    private var lastUnderlyingNetworkHandle: Long = -1L
+    private val physicalNetworks = mutableMapOf<Network, NetworkCapabilities>()
+    private var networkChangeJob: Job? = null
+    private var connectionNetwork: Network? = null
+    private var requestedConfig: TunnelConfig? = null
 
     private var tunPfd: ParcelFileDescriptor? = null
     private val activeTunRawFd = AtomicInteger(-1)
@@ -163,14 +169,16 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
         engineController = NativeEngineController(
             scope = serviceScope,
-            onStateChanged = { state ->
+            onStateChanged = { sessionId, state ->
                 serviceScope.launch {
+                    if (sessionId != sessionCounter.get()) return@launch
                     DebugLogger.i(TAG, "NativeEngineController onStateChanged: $state")
                     _vpnState.value = state
                     updateNotification(state)
 
                     if (state is VpnState.Connected) {
                         DebugLogger.i(TAG, "Native handshake confirmed. Starting ping monitor.")
+                        setUnderlyingNetworks(connectionNetwork?.let { arrayOf(it) })
                         activeConfig?.let { startPingMonitor(it) }
                     } else if (state is VpnState.Disconnected || state is VpnState.Error) {
                         stopPingMonitor()
@@ -194,7 +202,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
             DebugLogger.w(TAG, "onStartCommand intent is null (process restart by OS)")
-            val cfg = _currentConfig
+            val cfg = requestedConfig
             if (!isUserInitiatedStop && cfg != null) {
                 DebugLogger.i(TAG, "Restoring tunnel after process restart for ${cfg.serverName}")
                 start(this, cfg)
@@ -224,46 +232,16 @@ class VpnTunnelService : VpnService(), SocketProtector {
                     return START_NOT_STICKY
                 }
 
-                connectJob?.cancel()
-                watchdogJob?.cancel()
-                val sessionId = sessionCounter.incrementAndGet()
                 isUserInitiatedStop = false
-
-                activeConfig = config
+                requestedConfig = config
                 _currentConfig = config
-                DebugLogger.i(
-                    TAG,
-                    "Starting tunnel connection [session=$sessionId] for '${config.serverName}' (${config.protocol.displayName}), endpoint=${config.serverAddress}:${config.serverPort}, vIP=${config.ipv4Address}/${config.ipv4Prefix}"
-                )
-
-                startForegroundNotification(VpnState.Connecting(config.protocol, config.serverName))
-
-                connectJob = serviceScope.launch(Dispatchers.IO) {
-                    tunnelMutex.withLock {
-                        if (!isActive || sessionId != sessionCounter.get()) {
-                            DebugLogger.w(TAG, "Connect job cancelled before lock acquisition (session=$sessionId)")
-                            return@withLock
-                        }
-                        try {
-                            establishTunnel(config, sessionId)
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            DebugLogger.i(TAG, "Connection job cancelled during establishment (session=$sessionId)")
-                            throw e
-                        } catch (e: Exception) {
-                            DebugLogger.e(TAG, "Failed to establish tunnel: ${e.message}", e)
-                            if (sessionId == sessionCounter.get()) {
-                                val errState = VpnState.Error(
-                                    message = e.message ?: "Failed to establish TUN interface",
-                                    protocol = config.protocol,
-                                    throwable = e,
-                                    canRetry = true
-                                )
-                                _vpnState.value = errState
-                                updateNotification(errState)
-                            }
-                        }
-                    }
+                val network = currentPhysicalNetwork ?: connectivityManager.activeNetwork?.takeIf {
+                    connectivityManager.getNetworkCapabilities(it)?.let(::isUsablePhysicalNetwork) == true
                 }
+                val state = VpnState.Connecting(config.protocol, config.serverName)
+                _vpnState.value = state
+                startForegroundNotification(state)
+                launchConnection(config, network, reconnecting = false)
             }
 
             ACTION_DISCONNECT -> {
@@ -281,7 +259,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
             }
         }
 
-        return if (_vpnState.value is VpnState.Connected || _vpnState.value is VpnState.Connecting) {
+        return if (_vpnState.value is VpnState.Connected || _vpnState.value is VpnState.Connecting ||
+            _vpnState.value is VpnState.Reconnecting) {
             START_STICKY
         } else {
             START_NOT_STICKY
@@ -292,15 +271,13 @@ class VpnTunnelService : VpnService(), SocketProtector {
      * Pre-resolves server domain name into an IPv4 address using the active physical network,
      * bypassing the TUN interface to prevent DNS resolution deadlocks.
      */
-    private suspend fun resolvePhysicalServerIp(host: String): String? {
+    private suspend fun resolvePhysicalServerIp(host: String, activeNet: Network?): String? {
         if (host.isBlank()) return null
         if (host.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
             return host
         }
 
         DebugLogger.i(TAG, "Pre-resolving serverAddress '$host' via physical DNS...")
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager
-        val activeNet = currentPhysicalNetwork ?: cm?.activeNetwork
 
         for (attempt in 1..3) {
             // 1. Try querying DNS explicitly on the underlying physical network
@@ -491,7 +468,12 @@ class VpnTunnelService : VpnService(), SocketProtector {
      * or prepares 2-phase dynamic initialization callback for OpenConnect,
      * and delegates control to [NativeEngineController].
      */
-    private suspend fun establishTunnel(config: TunnelConfig, sessionId: Long) {
+    private suspend fun establishTunnel(
+        config: TunnelConfig,
+        sessionId: Long,
+        network: Network?,
+        reuseTun: Boolean
+    ) {
         if (sessionId != sessionCounter.get()) {
             DebugLogger.w(TAG, "Session ID mismatch ($sessionId vs ${sessionCounter.get()}), aborting establishTunnel")
             return
@@ -503,7 +485,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
         } catch (e: Exception) {
             DebugLogger.w(TAG, "Error stopping previous engine in establishTunnel: ${e.message}")
         }
-        closeTunResources()
+        if (!reuseTun) closeTunResources()
 
         DebugLogger.i(TAG, "Establishing TUN interface [session=$sessionId]: server='${config.serverName}' (${config.protocol.displayName}), MTU=${config.mtu}...")
 
@@ -532,7 +514,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
         var effectiveRawJson = config.rawConfigJson
 
         // Pre-resolve server hostname to IPv4 address BEFORE establish()
-        val resolvedServerIp = resolvePhysicalServerIp(config.serverAddress)
+        val resolvedServerIp = resolvePhysicalServerIp(config.serverAddress, network)
         if (resolvedServerIp == null && config.serverAddress.isNotBlank() && !config.serverAddress.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+"))) {
             val errMsg = "Не удалось определить IP-адрес сервера '${config.serverAddress}'. Проверьте интернет-соединение."
             DebugLogger.e(TAG, errMsg)
@@ -626,11 +608,9 @@ class VpnTunnelService : VpnService(), SocketProtector {
         activeAssignedIpv4 = effectiveConfig.ipv4Address
         activeAssignedPrefix = effectiveConfig.ipv4Prefix
 
-        closeTunResources()
-
         val tunConfigCallback = if (effectiveConfig.protocol == VpnProtocol.OPENCONNECT) {
             JniBridge.TunConfigCallback { configJson ->
-                onTunConfigReady(configJson)
+                if (sessionId == sessionCounter.get()) onTunConfigReady(configJson) else -1
             }
         } else {
             null
@@ -641,6 +621,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
             // OpenConnect handles dynamic 2-phase TUN creation via tunConfigCallback
             rawFd = -1
             DebugLogger.i(TAG, "OpenConnect starting with dynamic 2-phase TUN callback")
+        } else if (reuseTun && activeTunRawFd.get() >= 0) {
+            rawFd = activeTunRawFd.get()
         } else {
             // WireGuard / AmneziaWG: establish TUN immediately
             val builder = Builder().apply {
@@ -749,7 +731,15 @@ class VpnTunnelService : VpnService(), SocketProtector {
         }
 
         // Launch native engine
-        val startResult = engineController.startTunnel(effectiveConfig, rawFd, this, tunConfigCallback)
+        val protector = SocketProtector { fd ->
+            sessionId == sessionCounter.get() && prepareTransportSocket(fd, network)
+        }
+        val startResult = engineController.startTunnel(effectiveConfig, rawFd, protector, tunConfigCallback, sessionId)
+        if (sessionId != sessionCounter.get()) {
+            engineController.stopTunnel()
+            closeTunResources()
+            return
+        }
         if (startResult.isFailure) {
             val err = startResult.exceptionOrNull()?.message ?: "Native engine failed to start"
             DebugLogger.e(TAG, "engineController.startTunnel failed: $err")
@@ -762,7 +752,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
         // Timeout watchdog: If native handshake does not succeed within 25 seconds, report error
         watchdogJob = serviceScope.launch {
             delay(25000L)
-            if (sessionId == sessionCounter.get() && _vpnState.value is VpnState.Connecting) {
+            if (sessionId == sessionCounter.get() &&
+                (_vpnState.value is VpnState.Connecting || _vpnState.value is VpnState.Reconnecting)) {
                 val errMsg = "Сервер не ответил на запрос подключения (таймаут рукопожатия). Проверьте настройки или выберите другой шлюз."
                 DebugLogger.w(TAG, errMsg)
                 val timeoutState = VpnState.Error(
@@ -790,58 +781,114 @@ class VpnTunnelService : VpnService(), SocketProtector {
         return success
     }
 
-    /**
-     * Monitors default physical networks for zero-interruption roaming (e.g. Wi-Fi <-> Cellular).
-     */
-    private fun registerNetworkMonitor() {
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                connectivityManager.getNetworkCapabilities(network)?.let { capabilities ->
-                    if (isUsablePhysicalNetwork(capabilities)) handleNetworkChange(network)
-                }
+    private fun prepareTransportSocket(fd: Int, network: Network?): Boolean {
+        if (fd < 0) return false
+        if (network != null) {
+            try {
+                // The duplicate shares the socket binding. The engine still owns the original fd.
+                ParcelFileDescriptor.fromFd(fd).use { network.bindSocket(it.fileDescriptor) }
+            } catch (e: Exception) {
+                DebugLogger.w(TAG, "Transport socket binding failed on network ${network.networkHandle}", e)
+                return false
             }
+        }
+        return protectSocket(fd)
+    }
 
+    private fun registerNetworkMonitor() {
+        val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 if (isUsablePhysicalNetwork(capabilities)) {
-                    handleNetworkChange(network)
+                    physicalNetworks[network] = capabilities
+                } else {
+                    physicalNetworks.remove(network)
                 }
+                schedulePhysicalNetworkSelection()
             }
 
             override fun onLost(network: Network) {
-                DebugLogger.w(TAG, "Default physical network lost: $network")
-                if (currentPhysicalNetwork == network) {
-                    currentPhysicalNetwork = null
-                    lastUnderlyingNetworkHandle = -1L
-                }
+                physicalNetworks.remove(network)
+                schedulePhysicalNetworkSelection()
             }
         }
-
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
         try {
-            connectivityManager.registerDefaultNetworkCallback(networkCallback!!)
-            DebugLogger.i(TAG, "Registered physical network monitor via registerDefaultNetworkCallback")
+            connectivityManager.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
+            networkCallback = callback
         } catch (e: Exception) {
-            DebugLogger.e(TAG, "Failed to register default NetworkCallback: ${e.message}", e)
+            DebugLogger.w(TAG, "Failed to monitor physical networks", e)
         }
     }
 
-    private fun isUsablePhysicalNetwork(capabilities: NetworkCapabilities): Boolean {
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+    private fun isUsablePhysicalNetwork(capabilities: NetworkCapabilities): Boolean =
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+
+    private fun schedulePhysicalNetworkSelection() {
+        networkChangeJob?.cancel()
+        networkChangeJob = serviceScope.launch {
+            delay(350L)
+            val validated = physicalNetworks.filterValues {
+                it.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            }
+            val defaultNetwork = connectivityManager.activeNetwork
+            val selected = when {
+                defaultNetwork != null && defaultNetwork in validated -> defaultNetwork
+                else -> validated.entries.firstOrNull {
+                    it.value.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                }?.key ?: validated.entries.firstOrNull {
+                    it.value.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                }?.key ?: validated.keys.firstOrNull { it == currentPhysicalNetwork }
+                    ?: validated.keys.firstOrNull()
+                    ?: currentPhysicalNetwork?.takeIf { it in physicalNetworks }
+                    ?: defaultNetwork?.takeIf { it in physicalNetworks }
+                    ?: physicalNetworks.keys.firstOrNull()
+            }
+            currentPhysicalNetwork = selected
+            val config = requestedConfig ?: return@launch
+            if (selected == null || selected == connectionNetwork || isUserInitiatedStop) return@launch
+            if (_vpnState.value is VpnState.Disconnecting) return@launch
+            launchConnection(config, selected, reconnecting = true)
+        }
     }
 
-    private fun handleNetworkChange(network: Network) {
-        val capabilities = connectivityManager.getNetworkCapabilities(network)
-        if (capabilities == null || !isUsablePhysicalNetwork(capabilities)) return
-        currentPhysicalNetwork = network
-        val handle = network.networkHandle
-        if (handle != lastUnderlyingNetworkHandle) {
-            lastUnderlyingNetworkHandle = handle
-            DebugLogger.i(TAG, "Physical network changed to $network (handle=$handle)")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                setUnderlyingNetworks(arrayOf(network))
-            }
-            if (_vpnState.value is VpnState.Connected) {
-                engineController.updateNetwork(handle)
+    private fun launchConnection(config: TunnelConfig, network: Network?, reconnecting: Boolean) {
+        connectJob?.cancel()
+        watchdogJob?.cancel()
+        // Reuse only the TUN from the running Rust session for this very same profile.
+        val reuseTun = reconnecting && _vpnState.value is VpnState.Connected &&
+            config.protocol != VpnProtocol.OPENCONNECT
+        val sessionId = sessionCounter.incrementAndGet()
+        connectionNetwork = network
+        if (reconnecting) {
+            val state = VpnState.Reconnecting(config.protocol, reason = "Physical network changed")
+            _vpnState.value = state
+            updateNotification(state)
+        }
+        DebugLogger.i(TAG, "Starting VPN session $sessionId on network ${network?.networkHandle}")
+        connectJob = serviceScope.launch(Dispatchers.IO) {
+            tunnelMutex.withLock {
+                if (!isActive || sessionId != sessionCounter.get()) return@withLock
+                try {
+                    establishTunnel(config, sessionId, network, reuseTun)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (sessionId == sessionCounter.get()) {
+                        closeTunResources()
+                        val error = VpnState.Error(
+                            message = e.message ?: "Failed to establish VPN transport",
+                            protocol = config.protocol,
+                            throwable = e,
+                            canRetry = true
+                        )
+                        _vpnState.value = error
+                        updateNotification(error)
+                    }
+                }
             }
         }
     }
@@ -874,10 +921,14 @@ class VpnTunnelService : VpnService(), SocketProtector {
         DebugLogger.i(TAG, "stopTunnelGracefully: tearing down session")
         connectJob?.cancel()
         connectJob = null
+        networkChangeJob?.cancel()
+        networkChangeJob = null
         stopPingMonitor()
         watchdogJob?.cancel()
         watchdogJob = null
-        sessionCounter.incrementAndGet()
+        val stopSession = sessionCounter.incrementAndGet()
+        requestedConfig = null
+        connectionNetwork = null
 
         _currentConfig = null
         _vpnState.value = VpnState.Disconnecting(activeConfig?.protocol)
@@ -885,6 +936,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
         serviceScope.launch(Dispatchers.IO) {
             tunnelMutex.withLock {
+                if (stopSession != sessionCounter.get()) return@withLock
                 try {
                     engineController.stopTunnel()
                 } catch (e: Exception) {
@@ -895,12 +947,14 @@ class VpnTunnelService : VpnService(), SocketProtector {
                 activeConfig = null
                 lastMeasuredPingMs = 0L
 
+                if (stopSession != sessionCounter.get()) return@withLock
                 _vpnState.value = VpnState.Disconnected
                 _tunnelStats.value = TunnelStats.EMPTY
                 updateNotification(VpnState.Disconnected)
                 DebugLogger.i(TAG, "Tunnel teardown completed. State=DISCONNECTED")
 
                 serviceScope.launch(Dispatchers.Main) {
+                    if (stopSession != sessionCounter.get()) return@launch
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
@@ -913,6 +967,8 @@ class VpnTunnelService : VpnService(), SocketProtector {
 
         connectJob?.cancel()
         connectJob = null
+        networkChangeJob?.cancel()
+        networkChangeJob = null
         stopPingMonitor()
         watchdogJob?.cancel()
         watchdogJob = null
@@ -937,6 +993,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
         _currentConfig = null
         _vpnState.value = VpnState.Disconnected
         _tunnelStats.value = TunnelStats.EMPTY
+        physicalNetworks.clear()
         serviceScope.cancel()
 
         super.onDestroy()
@@ -1182,3 +1239,4 @@ class VpnTunnelService : VpnService(), SocketProtector {
         return builder.build()
     }
 }
+

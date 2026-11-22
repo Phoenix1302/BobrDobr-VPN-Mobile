@@ -812,8 +812,8 @@ func stop_tunnel() C.int {
 //export update_network
 func update_network(net_id C.int64_t) C.int {
 	currentNetId.Store(int64(net_id))
-	base.Info("Go Engine received physical network update: net_id =", int64(net_id))
-	return C.ENGINE_SUCCESS
+	base.Warn("Go Engine cannot rebind an established CSTP/DTLS socket in place; requesting reconnect for net_id =", int64(net_id))
+	return C.ENGINE_ERR_GENERIC
 }
 
 //export get_tunnel_stats
