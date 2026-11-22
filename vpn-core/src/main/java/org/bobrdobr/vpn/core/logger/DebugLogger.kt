@@ -82,20 +82,20 @@ object DebugLogger {
     private val _logsFlow = MutableStateFlow<List<LogEntry>>(emptyList())
     val logsFlow: StateFlow<List<LogEntry>> = _logsFlow.asStateFlow()
 
-    private val _isDebugModeEnabled = MutableStateFlow(true)
+    private val _isDebugModeEnabled = MutableStateFlow(false)
     val isDebugModeEnabled: StateFlow<Boolean> = _isDebugModeEnabled.asStateFlow()
 
     private var appContext: Context? = null
 
     /**
      * Initializes logger preferences from persistent storage.
-     * Defaults to enabled (true) for pre-release diagnostics.
+     * Defaults to disabled (false) for production release.
      */
     fun init(context: Context) {
         appContext = context.applicationContext
         try {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val enabled = prefs.getBoolean(KEY_DEBUG_ENABLED, true)
+            val enabled = prefs.getBoolean(KEY_DEBUG_ENABLED, false)
             _isDebugModeEnabled.value = enabled
         } catch (_: Exception) {}
     }
@@ -121,11 +121,13 @@ object DebugLogger {
     fun getAllLogsText(): String = getLogsAsText()
 
     fun v(tag: String, message: String) {
+        if (!_isDebugModeEnabled.value) return
         Log.v(tag, message)
         appendEntry(LogLevel.VERBOSE, tag, message, null)
     }
 
     fun d(tag: String, message: String) {
+        if (!_isDebugModeEnabled.value) return
         Log.d(tag, message)
         appendEntry(LogLevel.DEBUG, tag, message, null)
     }

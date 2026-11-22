@@ -36,9 +36,9 @@ object DiagnosticDumpManager {
             } else {
                 @Suppress("DEPRECATION")
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            } ?: "0.9.8-prerelease"
+            } ?: "1.0.0"
         } catch (_: Exception) {
-            "0.9.9-prerelease"
+            "1.0.0"
         }
     }
 
@@ -54,7 +54,7 @@ object DiagnosticDumpManager {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionCode.toLong()
             }
         } catch (_: Exception) {
-            84L
+            100L
         }
     }
 
