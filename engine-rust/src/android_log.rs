@@ -1,5 +1,19 @@
 //! Android Logcat integration for BobrDobr VPN Rust Engine.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static LOGGING_ENABLED: AtomicBool = AtomicBool::new(true);
+
+#[inline]
+pub fn set_logging_enabled(enabled: bool) {
+    LOGGING_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn should_log_debug() -> bool {
+    LOGGING_ENABLED.load(Ordering::Relaxed)
+}
+
 #[allow(dead_code)]
 pub const ANDROID_LOG_DEBUG: libc::c_int = 3;
 #[allow(dead_code)]
@@ -23,7 +37,8 @@ extern "C" {
 #[macro_export]
 macro_rules! log_info {
     ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
+        if $crate::android_log::should_log_debug() {
+            let msg = format!($($arg)*);
         #[cfg(target_os = "android")]
         {
             let tag = b"BobrDobr_RustEngine\0";
@@ -42,6 +57,7 @@ macro_rules! log_info {
         #[cfg(not(target_os = "android"))]
         {
             println!("[INFO] BobrDobr_RustEngine: {}", msg);
+            }
         }
     }};
 }
@@ -49,6 +65,7 @@ macro_rules! log_info {
 #[macro_export]
 macro_rules! log_error {
     ($($arg:tt)*) => {{
+        if $crate::android_log::should_log_debug() {
         let msg = format!($($arg)*);
         #[cfg(target_os = "android")]
         {
@@ -69,12 +86,14 @@ macro_rules! log_error {
         {
             eprintln!("[ERROR] BobrDobr_RustEngine: {}", msg);
         }
+        }
     }};
 }
 
 #[macro_export]
 macro_rules! log_warn {
     ($($arg:tt)*) => {{
+        if $crate::android_log::should_log_debug() {
         let msg = format!($($arg)*);
         #[cfg(target_os = "android")]
         {
@@ -95,13 +114,15 @@ macro_rules! log_warn {
         {
             eprintln!("[WARN] BobrDobr_RustEngine: {}", msg);
         }
+        }
     }};
 }
 
 #[macro_export]
 macro_rules! log_debug {
     ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
+        if $crate::android_log::should_log_debug() {
+            let msg = format!($($arg)*);
         #[cfg(target_os = "android")]
         {
             let tag = b"BobrDobr_RustEngine\0";
@@ -120,6 +141,7 @@ macro_rules! log_debug {
         #[cfg(not(target_os = "android"))]
         {
             println!("[DEBUG] BobrDobr_RustEngine: {}", msg);
+            }
         }
     }};
 }

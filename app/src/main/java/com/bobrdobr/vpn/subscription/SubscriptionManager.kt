@@ -1,5 +1,8 @@
 package com.bobrdobr.vpn.subscription
 
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -7,7 +10,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -114,7 +116,7 @@ class SubscriptionManager private constructor(private val context: Context) {
         while (attempt <= maxRetries) {
             var connection: HttpURLConnection? = null
             try {
-                Log.d(TAG, "Requesting subscription from: $normalizedUrl (attempt ${attempt + 1}/${maxRetries + 1})")
+                DebugLogger.d(TAG, "Requesting subscription from: $normalizedUrl (attempt ${attempt + 1}/${maxRetries + 1})")
                 val urlObj = URL(normalizedUrl)
                 connection = (urlObj.openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
@@ -126,7 +128,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                 }
 
                 val responseCode = connection.responseCode
-                Log.d(TAG, "HTTP Response Code: $responseCode from $normalizedUrl")
+                DebugLogger.d(TAG, "HTTP Response Code: $responseCode from $normalizedUrl")
 
                 when (responseCode) {
                     HttpURLConnection.HTTP_OK -> {
@@ -164,7 +166,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                             backoffMs
                         }
 
-                        Log.w(TAG, "Rate limited (HTTP 429). Backing off for ${delayDuration}ms...")
+                        DebugLogger.w(TAG, "Rate limited (HTTP 429). Backing off for ${delayDuration}ms...")
                         if (attempt <= maxRetries) {
                             delay(delayDuration)
                             backoffMs *= 2 // Exponential backoff: 2s -> 4s -> 8s
@@ -185,7 +187,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                         val errJson = try { JSONObject(errBody) } catch (_: Exception) { null }
                         val rawMsg = errJson?.optString("error", errBody) ?: errBody
                         val err = if (rawMsg.isNotBlank()) rawMsg else "Токен подписки отозван или недействителен (HTTP 401)"
-                        Log.e(TAG, "Unauthorized (HTTP 401): $err")
+                        DebugLogger.e(TAG, "Unauthorized (HTTP 401): $err")
                         handleUnauthorizedToken(err, normalizedUrl)
                         _syncError.value = err
                         _isSyncing.value = false
@@ -203,7 +205,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                                 rawMsg.contains("бан", ignoreCase = true)
 
                         val err = if (rawMsg.isNotBlank()) rawMsg else if (isBlocked) "Аккаунт заблокирован администратором" else "Срок действия подписки истек"
-                        Log.e(TAG, "Forbidden (HTTP 403, isBlocked=$isBlocked): $err")
+                        DebugLogger.e(TAG, "Forbidden (HTTP 403, isBlocked=$isBlocked): $err")
                         handleForbiddenSubscription(isBlocked, err, normalizedUrl)
                         _syncError.value = err
                         _isSyncing.value = false
@@ -214,7 +216,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                         val errorStream = connection.errorStream
                         val errBody = errorStream?.readBoundedText() ?: ""
                         val err = "Ошибка сервера подписки (HTTP $responseCode): $errBody"
-                        Log.e(TAG, err)
+                        DebugLogger.e(TAG, err)
                         _syncError.value = err
                         _isSyncing.value = false
                         return@withContext Result.failure(IllegalStateException(err))
@@ -222,13 +224,13 @@ class SubscriptionManager private constructor(private val context: Context) {
                 }
             } catch (e: Exception) {
                 attempt++
-                Log.w(TAG, "Subscription fetch error on attempt $attempt: ${e.message}")
+                DebugLogger.w(TAG, "Subscription fetch error on attempt $attempt: ${e.message}")
                 if (attempt <= maxRetries) {
                     delay(backoffMs)
                     backoffMs *= 2
                 } else {
                     val msg = "Не удалось подключиться к серверу подписки: ${e.message}"
-                    Log.e(TAG, msg, e)
+                    DebugLogger.e(TAG, msg, e)
                     _syncError.value = msg
                     _isSyncing.value = false
                     return@withContext Result.failure(e)
@@ -284,7 +286,7 @@ class SubscriptionManager private constructor(private val context: Context) {
 
     private fun handleSubscriptionLifecycle(info: SubscriptionInfo) {
         if (info.isSubscriptionExpired || info.isAccountBlocked) {
-            Log.w(TAG, "Active subscription is expired or blocked. Terminating tunnel.")
+            DebugLogger.w(TAG, "Active subscription is expired or blocked. Terminating tunnel.")
             VpnTunnelService.stop(context)
             val title = if (info.isAccountBlocked) "Аккаунт заблокирован" else "Подписка истекла"
             val message = if (info.isAccountBlocked) {
@@ -332,7 +334,7 @@ class SubscriptionManager private constructor(private val context: Context) {
 
             notificationManager.notify(7771, notification)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to post subscription notification: ${e.message}")
+            DebugLogger.w(TAG, "Failed to post subscription notification: ${e.message}")
         }
     }
 
@@ -366,7 +368,7 @@ class SubscriptionManager private constructor(private val context: Context) {
                 val tunnelCfg = profile.toServerProfile().toTunnelConfig()
                 keystoreManager.saveTunnelConfig(tunnelCfg)
             } catch (e: Exception) {
-                Log.w(TAG, "Error saving tunnel config to keystore: ${e.message}")
+                DebugLogger.w(TAG, "Error saving tunnel config to keystore: ${e.message}")
             }
         }
     }
@@ -447,17 +449,17 @@ class SubscriptionManager private constructor(private val context: Context) {
         managerScope.launch {
             try {
                 if (isOnline()) {
-                    Log.d(TAG, "Executing quiet cold-start subscription check...")
+                    DebugLogger.d(TAG, "Executing quiet cold-start subscription check...")
                     fetchSubscription(url)
                 } else {
-                    Log.d(TAG, "Offline during cold start. Checking cached expiration locally.")
+                    DebugLogger.d(TAG, "Offline during cold start. Checking cached expiration locally.")
                     val current = _subscriptionInfo.value
                     if (current.currentStatus is SubscriptionStatus.Expired) {
                         handleSubscriptionLifecycle(current)
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Quiet sync failed (expected when offline): ${e.message}")
+                DebugLogger.w(TAG, "Quiet sync failed (expected when offline): ${e.message}")
             }
         }
     }
@@ -498,7 +500,7 @@ class SubscriptionManager private constructor(private val context: Context) {
             ExistingPeriodicWorkPolicy.KEEP,
             periodicWork
         )
-        Log.i(TAG, "Scheduled periodic subscription synchronization (6h interval)")
+        DebugLogger.i(TAG, "Scheduled periodic subscription synchronization (6h interval)")
     }
 
     private fun java.io.InputStream.readBoundedText(maxBytes: Int = MAX_RESPONSE_BYTES): String {

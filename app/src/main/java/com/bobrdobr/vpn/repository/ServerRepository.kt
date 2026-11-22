@@ -1,8 +1,10 @@
 package com.bobrdobr.vpn.repository
 
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.Log
 import com.bobrdobr.vpn.ui.model.ServerProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,10 +69,10 @@ class ServerRepository private constructor(private val context: Context) {
             }
             if (migrated || legacyPrefs.contains(KEY_CUSTOM_SERVERS) || legacyPrefs.contains(KEY_SUB_SERVERS)) {
                 legacyPrefs.edit().clear().apply()
-                Log.i(TAG, "Migrated legacy server vault to hardware/TEE-backed Keystore storage")
+                DebugLogger.i(TAG, "Migrated legacy server vault to hardware/TEE-backed Keystore storage")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Legacy server vault migration check failed: ${e.message}")
+            DebugLogger.w(TAG, "Legacy server vault migration check failed: ${e.message}")
         }
 
         // 1. Load custom servers
@@ -83,7 +85,7 @@ class ServerRepository private constructor(private val context: Context) {
                     _customServers.add(ServerProfile.fromJson(arr.getJSONObject(i)))
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error loading custom servers", e)
+                DebugLogger.w(TAG, "Error loading custom servers", e)
             }
         }
 
@@ -97,7 +99,7 @@ class ServerRepository private constructor(private val context: Context) {
                     _subscriptionServers.add(ServerProfile.fromJson(arr.getJSONObject(i)))
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error loading subscription servers", e)
+                DebugLogger.w(TAG, "Error loading subscription servers", e)
             }
         }
     }

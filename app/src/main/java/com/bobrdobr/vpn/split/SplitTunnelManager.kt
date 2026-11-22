@@ -1,10 +1,12 @@
 package com.bobrdobr.vpn.split
 
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +18,7 @@ import org.bobrdobr.vpn.core.model.TunnelConfig
  * SplitTunnelManager: Manages Per-App Split Tunneling configuration and persistence.
  *
  * Provides installed package discovery, system vs user filtering, whitelist / blacklist
+
  * mode switching, and dynamic application of routing rules to [TunnelConfig].
  */
 class SplitTunnelManager private constructor(private val context: Context) {
@@ -59,13 +62,13 @@ class SplitTunnelManager private constructor(private val context: Context) {
     fun setEnabled(enabled: Boolean) {
         _isEnabled.value = enabled
         prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
-        Log.i(TAG, "Split tunneling enabled: $enabled")
+        DebugLogger.i(TAG, "Split tunneling enabled: $enabled")
     }
 
     fun setMode(mode: SplitTunnelMode) {
         _mode.value = mode
         prefs.edit().putString(KEY_MODE, mode.name).apply()
-        Log.i(TAG, "Split tunneling mode changed to: ${mode.name}")
+        DebugLogger.i(TAG, "Split tunneling mode changed to: ${mode.name}")
     }
 
     fun toggleApp(packageName: String) {
@@ -102,16 +105,18 @@ class SplitTunnelManager private constructor(private val context: Context) {
     suspend fun loadInstalledApps(): List<AppInfo> = withContext(Dispatchers.IO) {
         val pm = context.packageManager
         val selfPackage = context.packageName
+
         val selected = _selectedApps.value
 
         val apps = try {
             pm.getInstalledApplications(PackageManager.GET_META_DATA)
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting installed applications", e)
+            DebugLogger.e(TAG, "Error getting installed applications", e)
             emptyList()
         }
 
         apps.filter { it.packageName != selfPackage }
+
             .map { appInfo ->
                 val label = try {
                     appInfo.loadLabel(pm).toString()
@@ -150,14 +155,14 @@ class SplitTunnelManager private constructor(private val context: Context) {
         val apps = _selectedApps.value
         return when (_mode.value) {
             SplitTunnelMode.WHITELIST -> {
-                Log.d(TAG, "Applying WHITELIST rules: ${apps.size} packages")
+                DebugLogger.d(TAG, "Applying WHITELIST rules: ${apps.size} packages")
                 config.copy(
                     allowedApplications = apps,
                     disallowedApplications = emptySet()
                 )
             }
             SplitTunnelMode.BLACKLIST -> {
-                Log.d(TAG, "Applying BLACKLIST rules: ${apps.size} packages")
+                DebugLogger.d(TAG, "Applying BLACKLIST rules: ${apps.size} packages")
                 config.copy(
                     allowedApplications = emptySet(),
                     disallowedApplications = apps

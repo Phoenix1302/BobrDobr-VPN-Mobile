@@ -17,7 +17,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
@@ -1120,7 +1119,7 @@ class VpnTunnelService : VpnService(), SocketProtector {
     }
 
     override fun onRevoke() {
-        Log.w(TAG, "VPN permission revoked by system or user")
+        DebugLogger.w(TAG, "VPN permission revoked by system or user")
         stopTunnelGracefully()
         super.onRevoke()
     }
@@ -1239,4 +1238,3 @@ class VpnTunnelService : VpnService(), SocketProtector {
         return builder.build()
     }
 }
-

@@ -1,9 +1,11 @@
 package com.bobrdobr.vpn.update
 
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -137,7 +139,7 @@ class AppUpdateManager private constructor(private val appContext: Context) {
         try {
             prefs.edit().putBoolean(KEY_INCLUDE_PRERELEASES, enabled).apply()
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to persist includePrereleases: ${e.message}")
+            DebugLogger.w(TAG, "Failed to persist includePrereleases: ${e.message}")
         }
         check(isManual = false)
     }
@@ -175,12 +177,12 @@ class AppUpdateManager private constructor(private val appContext: Context) {
                     if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
                         if (keepFile == null || file.absolutePath != keepFile.absolutePath) {
                             val deleted = file.delete()
-                            Log.i(TAG, "Cleaned up old update APK: ${file.name} (success=$deleted)")
+                            DebugLogger.i(TAG, "Cleaned up old update APK: ${file.name} (success=$deleted)")
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error cleaning update directory '${dir.absolutePath}': ${e.message}")
+                DebugLogger.w(TAG, "Error cleaning update directory '${dir.absolutePath}': ${e.message}")
             }
         }
     }
@@ -200,20 +202,20 @@ class AppUpdateManager private constructor(private val appContext: Context) {
                 }
 
                 if (release != null && isNewerVersion(release.version, CURRENT_VERSION_NAME)) {
-                    Log.i(TAG, "Update available: ${release.tagName} (prerelease=${release.isPrerelease})")
+                    DebugLogger.i(TAG, "Update available: ${release.tagName} (prerelease=${release.isPrerelease})")
                     _updateState.value = UpdateState.UpdateAvailable(release)
                     if (isManual) {
                         _manualCheckEvent.emit(ManualCheckResult.Available(release))
                     }
                 } else {
-                    Log.i(TAG, "App is up to date (current=$CURRENT_VERSION_NAME, channelPrereleases=${_includePrereleases.value})")
+                    DebugLogger.i(TAG, "App is up to date (current=$CURRENT_VERSION_NAME, channelPrereleases=${_includePrereleases.value})")
                     _updateState.value = UpdateState.UpToDate
                     if (isManual) {
                         _manualCheckEvent.emit(ManualCheckResult.UpToDate)
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Update check failed: ${e.message}", e)
+                DebugLogger.e(TAG, "Update check failed: ${e.message}", e)
                 val errMsg = e.message ?: "Не удалось проверить обновления"
                 _updateState.value = UpdateState.Error(errMsg)
                 if (isManual) {
@@ -244,7 +246,7 @@ class AppUpdateManager private constructor(private val appContext: Context) {
                 _updateState.value = UpdateState.ReadyToInstall(release, apkFile)
                 installApk(appContext, apkFile)
             } catch (e: Exception) {
-                Log.e(TAG, "Download/Install failed: ${e.message}", e)
+                DebugLogger.e(TAG, "Download/Install failed: ${e.message}", e)
                 _updateState.value = UpdateState.Error("Ошибка загрузки обновления: ${e.message}")
             }
         }
@@ -264,7 +266,7 @@ class AppUpdateManager private constructor(private val appContext: Context) {
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            Log.e(TAG, "Cannot start installer intent: ${e.message}", e)
+            DebugLogger.e(TAG, "Cannot start installer intent: ${e.message}", e)
         }
     }
 
@@ -279,7 +281,7 @@ class AppUpdateManager private constructor(private val appContext: Context) {
 
         val code = conn.responseCode
         if (code != 200) {
-            Log.w(TAG, "GitHub API returned HTTP $code")
+            DebugLogger.w(TAG, "GitHub API returned HTTP $code")
             return null
         }
 

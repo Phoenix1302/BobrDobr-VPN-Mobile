@@ -243,14 +243,14 @@ fun DiagnosticsScreen(
                             text = "Режим расширенной отладки",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
-                                color = TextPrimary,
+                                color = if (isDebugMode) TextPrimary else TextSecondary,
                                 fontSize = 14.sp
                             )
                         )
                         Text(
-                            text = "Включает детальное JNI/сетевое логирование и сбор дампа",
+                            text = if (isDebugMode) "Детальное JNI/сетевое логирование активно" else "Отключен для экономии батареи и снижения нагрузки на CPU",
                             style = MaterialTheme.typography.bodySmall.copy(
-                                color = TextSecondary,
+                                color = if (isDebugMode) NeonAmber else TextMuted,
                                 fontSize = 11.5.sp
                             )
                         )
@@ -519,7 +519,7 @@ fun DiagnosticsScreen(
                     Icon(
                         imageVector = if (isTerminalExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                         contentDescription = if (isTerminalExpanded) "Свернуть" else "Раскрыть",
-                        tint = NeonCyan
+                        tint = if (isDebugMode) NeonCyan else TextMuted.copy(alpha = 0.5f)
                     )
                 }
                 Spacer(modifier = Modifier.width(4.dp))
@@ -530,12 +530,13 @@ fun DiagnosticsScreen(
                         clipboardManager.setText(AnnotatedString(text))
                         Toast.makeText(context, "Логи скопированы в буфер обмена", Toast.LENGTH_SHORT).show()
                     },
+                    enabled = isDebugMode && logs.isNotEmpty(),
                     modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
                         contentDescription = "Копировать",
-                        tint = NeonCyan
+                        tint = if (isDebugMode && logs.isNotEmpty()) NeonCyan else TextMuted.copy(alpha = 0.35f)
                     )
                 }
                 Spacer(modifier = Modifier.width(4.dp))
@@ -545,26 +546,27 @@ fun DiagnosticsScreen(
                         DebugLogger.clearLogs()
                         Toast.makeText(context, "Логи очищены", Toast.LENGTH_SHORT).show()
                     },
+                    enabled = isDebugMode && logs.isNotEmpty(),
                     modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.DeleteOutline,
                         contentDescription = "Очистить",
-                        tint = NeonRed
+                        tint = if (isDebugMode && logs.isNotEmpty()) NeonRed else TextMuted.copy(alpha = 0.35f)
                     )
                 }
             }
         }
 
-        // Cyberpunk Terminal Box
+        // Cyberpunk Terminal Box (Darkened / Inactive when debug mode is disabled)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize()
                 .height(if (isTerminalExpanded) 390.dp else 190.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF050811))
-                .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+                .background(if (isDebugMode) Color(0xFF050811) else Color(0xFF020408))
+                .border(1.dp, if (isDebugMode) CardBorder else CardBorder.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
                 .padding(10.dp)
         ) {
             val listState = rememberLazyListState()
@@ -579,7 +581,36 @@ fun DiagnosticsScreen(
                 }
             }
 
-            if (logs.isEmpty()) {
+            if (!isDebugMode) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Terminal,
+                            contentDescription = null,
+                            tint = TextMuted.copy(alpha = 0.35f),
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "ТЕРМИНАЛ НЕАКТИВЕН",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.5.sp,
+                            color = TextMuted.copy(alpha = 0.6f)
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Режим отладки отключен для снижения нагрузки на CPU",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.5.sp,
+                            color = TextMuted.copy(alpha = 0.4f)
+                        )
+                    }
+                }
+            } else if (logs.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         text = "Терминал пуст. Ожидание сетевых событий...",

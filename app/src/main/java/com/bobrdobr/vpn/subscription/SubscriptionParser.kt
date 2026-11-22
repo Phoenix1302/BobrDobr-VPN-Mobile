@@ -1,6 +1,8 @@
 package com.bobrdobr.vpn.subscription
 
-import android.util.Log
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import com.bobrdobr.vpn.config.ConfigValidator
 import com.bobrdobr.vpn.config.ValidationResult
 import org.bobrdobr.vpn.core.model.VpnProtocol
@@ -163,7 +165,7 @@ object SubscriptionParser {
                     val profile = parseConnectionObject(connObj, i, serverHost)
                     profilesList.add(profile)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to parse connection item $i", e)
+                    DebugLogger.w(TAG, "Failed to parse connection item $i", e)
                 }
             }
         }

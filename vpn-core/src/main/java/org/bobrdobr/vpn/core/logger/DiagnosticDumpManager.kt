@@ -36,9 +36,9 @@ object DiagnosticDumpManager {
             } else {
                 @Suppress("DEPRECATION")
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            } ?: "1.0.0"
+            } ?: "1.0.1"
         } catch (_: Exception) {
-            "1.0.0"
+            "1.0.1"
         }
     }
 
@@ -54,7 +54,7 @@ object DiagnosticDumpManager {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionCode.toLong()
             }
         } catch (_: Exception) {
-            100L
+            101L
         }
     }
 

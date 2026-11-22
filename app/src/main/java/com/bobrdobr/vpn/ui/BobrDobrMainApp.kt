@@ -122,7 +122,8 @@ fun BobrDobrMainApp(
             when (currentTab) {
                 NavigationTab.DASHBOARD -> DashboardScreen(
                     viewModel = viewModel,
-                    onNavigateToServers = { viewModel.setNavigationTab(NavigationTab.SERVERS) }
+                    onNavigateToServers = { viewModel.setNavigationTab(NavigationTab.SERVERS) },
+                    onOpenUpdateDialog = { showUpdateDialog = true }
                 )
                 NavigationTab.SERVERS -> ServerListScreen(
                     viewModel = viewModel,

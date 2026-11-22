@@ -1,6 +1,5 @@
 package org.bobrdobr.vpn.core.engine
 
-import android.util.Log
 import org.bobrdobr.vpn.core.logger.DebugLogger
 import org.bobrdobr.vpn.core.model.TunnelStats
 import org.bobrdobr.vpn.core.service.SocketProtector
@@ -126,4 +125,7 @@ object JniBridge {
      */
     @JvmStatic
     external fun nativeGetTunnelStats(): TunnelStats?
+
+    @JvmStatic
+    external fun nativeSetLoggingEnabled(enabled: Boolean)
 }

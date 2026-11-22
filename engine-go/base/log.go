@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -16,6 +17,7 @@ const (
 
 var (
 	baseLevel = _Debug
+	loggingEnabled atomic.Bool
 	levels    = map[int]string{
 		_Debug: "DEBUG",
 		_Info:  "INFO",
@@ -27,6 +29,11 @@ var (
 
 func InitLog() {
 	baseLevel = logLevel2Int(Cfg.LogLevel)
+	loggingEnabled.Store(true)
+}
+
+func SetLoggingEnabled(enabled bool) {
+	loggingEnabled.Store(enabled)
 }
 
 func logLevel2Int(l string) int {
@@ -39,6 +46,9 @@ func logLevel2Int(l string) int {
 }
 
 func output(l int, s ...interface{}) {
+	if !loggingEnabled.Load() {
+		return
+	}
 	if baseLevel > l {
 		return
 	}

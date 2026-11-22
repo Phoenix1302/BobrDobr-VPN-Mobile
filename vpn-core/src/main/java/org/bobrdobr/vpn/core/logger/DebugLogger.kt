@@ -98,6 +98,7 @@ object DebugLogger {
             val enabled = prefs.getBoolean(KEY_DEBUG_ENABLED, false)
             _isDebugModeEnabled.value = enabled
         } catch (_: Exception) {}
+        syncNativeLogging()
     }
 
     /**
@@ -105,11 +106,23 @@ object DebugLogger {
      */
     fun setDebugMode(enabled: Boolean) {
         _isDebugModeEnabled.value = enabled
+        if (!enabled) {
+            clearLogsSilently()
+        }
         appContext?.let { ctx ->
             try {
                 val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 prefs.edit().putBoolean(KEY_DEBUG_ENABLED, enabled).apply()
             } catch (_: Exception) {}
+        }
+        syncNativeLogging()
+    }
+
+    private fun syncNativeLogging() {
+        try {
+            org.bobrdobr.vpn.core.engine.JniBridge.nativeSetLoggingEnabled(_isDebugModeEnabled.value)
+        } catch (_: Throwable) {
+            // Native engines may not be loaded yet during application startup.
         }
     }
 
@@ -133,11 +146,13 @@ object DebugLogger {
     }
 
     fun i(tag: String, message: String) {
+        if (!_isDebugModeEnabled.value) return
         Log.i(tag, message)
         appendEntry(LogLevel.INFO, tag, message, null)
     }
 
     fun w(tag: String, message: String, throwable: Throwable? = null) {
+        if (!_isDebugModeEnabled.value) return
         if (throwable != null) {
             Log.w(tag, message, throwable)
         } else {
@@ -147,6 +162,7 @@ object DebugLogger {
     }
 
     fun e(tag: String, message: String, throwable: Throwable? = null) {
+        if (!_isDebugModeEnabled.value) return
         if (throwable != null) {
             Log.e(tag, message, throwable)
         } else {
@@ -211,6 +227,10 @@ object DebugLogger {
      * Clears the in-memory ring buffer.
      */
     fun clearLogs() {
+        clearLogsSilently()
+    }
+
+    private fun clearLogsSilently() {
         synchronized(lock) {
             buffer.clear()
         }

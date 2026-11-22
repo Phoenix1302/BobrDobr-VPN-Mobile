@@ -1,12 +1,14 @@
 package org.bobrdobr.vpn.core.security
 
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
-import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import org.bobrdobr.vpn.core.model.TunnelConfig
@@ -79,11 +81,11 @@ class KeystoreManager(private val context: Context) {
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
-                Log.i(TAG, "Initialized EncryptedSharedPreferences with StrongBox MasterKey")
+                DebugLogger.i(TAG, "Initialized EncryptedSharedPreferences with StrongBox MasterKey")
                 return sp
             }
         } catch (t: Throwable) {
-            Log.w(TAG, "StrongBox MasterKey unavailable or failed (${t.message}), falling back to standard Keystore...")
+            DebugLogger.w(TAG, "StrongBox MasterKey unavailable or failed (${t.message}), falling back to standard Keystore...")
         }
 
         // Tier 2: Try EncryptedSharedPreferences with standard MasterKey (TEE / default AndroidKeyStore)
@@ -100,18 +102,18 @@ class KeystoreManager(private val context: Context) {
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
-            Log.i(TAG, "Initialized EncryptedSharedPreferences with standard MasterKey (TEE/Keystore)")
+            DebugLogger.i(TAG, "Initialized EncryptedSharedPreferences with standard MasterKey (TEE/Keystore)")
             return sp
         } catch (t: Throwable) {
-            Log.w(TAG, "Standard EncryptedSharedPreferences failed (${t.message}), falling back to compat storage...")
+            DebugLogger.w(TAG, "Standard EncryptedSharedPreferences failed (${t.message}), falling back to compat storage...")
         }
 
         // Tier 3: Fallback to standard SharedPreferences (Emulators, Firebase Test Lab, headless environments)
         return try {
-            Log.w(TAG, "Using compat SharedPreferences ($COMPAT_PREFS_FILE) to prevent startup crash")
+            DebugLogger.w(TAG, "Using compat SharedPreferences ($COMPAT_PREFS_FILE) to prevent startup crash")
             context.getSharedPreferences(COMPAT_PREFS_FILE, Context.MODE_PRIVATE)
         } catch (t: Throwable) {
-            Log.e(TAG, "CRITICAL: Could not open compat SharedPreferences: ${t.message}", t)
+            DebugLogger.e(TAG, "CRITICAL: Could not open compat SharedPreferences: ${t.message}", t)
             context.getSharedPreferences("bobrdobr_vault_emergency", Context.MODE_PRIVATE)
         }
     }
@@ -134,9 +136,9 @@ class KeystoreManager(private val context: Context) {
                 .putStringSet(KEY_CONFIG_LIST, ids)
                 .apply()
 
-            Log.d(TAG, "Saved config ${config.id} (${config.serverName}) to secure storage")
+            DebugLogger.d(TAG, "Saved config ${config.id} (${config.serverName}) to secure storage")
         } catch (t: Throwable) {
-            Log.e(TAG, "Error saving TunnelConfig ${config.id}: ${t.message}", t)
+            DebugLogger.e(TAG, "Error saving TunnelConfig ${config.id}: ${t.message}", t)
         }
     }
 
@@ -149,7 +151,7 @@ class KeystoreManager(private val context: Context) {
             val json = prefs.getString(prefKey, null) ?: return null
             TunnelConfig.fromJson(json)
         } catch (t: Throwable) {
-            Log.e(TAG, "Error reading TunnelConfig $id from storage: ${t.message}", t)
+            DebugLogger.e(TAG, "Error reading TunnelConfig $id from storage: ${t.message}", t)
             null
         }
     }
@@ -166,7 +168,7 @@ class KeystoreManager(private val context: Context) {
             }
             list
         } catch (t: Throwable) {
-            Log.e(TAG, "Error retrieving all TunnelConfigs: ${t.message}", t)
+            DebugLogger.e(TAG, "Error retrieving all TunnelConfigs: ${t.message}", t)
             emptyList()
         }
     }
@@ -185,9 +187,9 @@ class KeystoreManager(private val context: Context) {
                 .putStringSet(KEY_CONFIG_LIST, ids)
                 .apply()
 
-            Log.d(TAG, "Deleted config $id from secure storage")
+            DebugLogger.d(TAG, "Deleted config $id from secure storage")
         } catch (t: Throwable) {
-            Log.e(TAG, "Error deleting TunnelConfig $id: ${t.message}", t)
+            DebugLogger.e(TAG, "Error deleting TunnelConfig $id: ${t.message}", t)
         }
     }
 
@@ -195,7 +197,7 @@ class KeystoreManager(private val context: Context) {
         return try {
             prefs.getStringSet(KEY_CONFIG_LIST, emptySet()) ?: emptySet()
         } catch (t: Throwable) {
-            Log.e(TAG, "Error reading config IDs set: ${t.message}", t)
+            DebugLogger.e(TAG, "Error reading config IDs set: ${t.message}", t)
             emptySet()
         }
     }
@@ -211,7 +213,7 @@ class KeystoreManager(private val context: Context) {
                 .putString(key, secret)
                 .apply()
         } catch (t: Throwable) {
-            Log.e(TAG, "Error saving secret $key: ${t.message}", t)
+            DebugLogger.e(TAG, "Error saving secret $key: ${t.message}", t)
         }
     }
 
@@ -222,7 +224,7 @@ class KeystoreManager(private val context: Context) {
         return try {
             prefs.getString(key, null)
         } catch (t: Throwable) {
-            Log.e(TAG, "Error getting secret $key: ${t.message}", t)
+            DebugLogger.e(TAG, "Error getting secret $key: ${t.message}", t)
             null
         }
     }
@@ -236,7 +238,7 @@ class KeystoreManager(private val context: Context) {
                 .remove(key)
                 .apply()
         } catch (t: Throwable) {
-            Log.e(TAG, "Error deleting secret $key: ${t.message}", t)
+            DebugLogger.e(TAG, "Error deleting secret $key: ${t.message}", t)
         }
     }
 
@@ -265,7 +267,7 @@ class KeystoreManager(private val context: Context) {
                     try {
                         specBuilder.setIsStrongBoxBacked(true)
                     } catch (t: Throwable) {
-                        Log.w(TAG, "Could not set StrongBox backing on KeyGenParameterSpec: ${t.message}")
+                        DebugLogger.w(TAG, "Could not set StrongBox backing on KeyGenParameterSpec: ${t.message}")
                     }
                 }
             }
@@ -273,7 +275,7 @@ class KeystoreManager(private val context: Context) {
             keyGenerator.init(specBuilder.build())
             keyGenerator.generateKey()
         } catch (t: Throwable) {
-            Log.w(TAG, "Failed to generate hardware key $alias: ${t.message}")
+            DebugLogger.w(TAG, "Failed to generate hardware key $alias: ${t.message}")
             null
         }
     }
@@ -295,7 +297,7 @@ class KeystoreManager(private val context: Context) {
                 keyInfo.isInsideSecureHardware
             }
         } catch (t: Throwable) {
-            Log.w(TAG, "Hardware backing check failed for $alias: ${t.message}")
+            DebugLogger.w(TAG, "Hardware backing check failed for $alias: ${t.message}")
             false
         }
     }

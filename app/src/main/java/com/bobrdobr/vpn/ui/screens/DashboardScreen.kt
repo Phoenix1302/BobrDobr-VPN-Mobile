@@ -133,6 +133,7 @@ import com.bobrdobr.vpn.update.UpdateState
 fun DashboardScreen(
     viewModel: MainViewModel,
     onNavigateToServers: () -> Unit,
+    onOpenUpdateDialog: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -171,7 +172,6 @@ fun DashboardScreen(
 
     val updateManager = remember { com.bobrdobr.vpn.update.AppUpdateManager.getInstance(context) }
     val updateState by updateManager.updateState.collectAsStateWithLifecycle()
-    var showUpdateDialog by remember { mutableStateOf(false) }
     var showQuickSwitchDialog by remember { mutableStateOf(false) }
 
     val vpnPrepareLauncher = rememberLauncherForActivityResult(
@@ -421,7 +421,7 @@ fun DashboardScreen(
                         .clip(RoundedCornerShape(8.dp))
                         .background(NeonCyan.copy(alpha = 0.18f))
                         .border(1.dp, NeonCyan, RoundedCornerShape(8.dp))
-                        .clickable { showUpdateDialog = true }
+                        .clickable(onClick = onOpenUpdateDialog)
                         .padding(horizontal = 7.dp, vertical = 3.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

@@ -101,6 +101,7 @@ int update_network(int64_t net_id);
  * Retrieves the current real-time metrics and traffic telemetry from the active engine.
  */
 int get_tunnel_stats(tunnel_stats_t* stats);
+void set_logging_enabled(bool enabled);
 #endif
 
 #ifdef __cplusplus

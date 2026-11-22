@@ -1,9 +1,11 @@
 package com.bobrdobr.vpn.ui.screens
 
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import android.app.Activity
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1121,12 +1123,12 @@ private fun AddServerDialog(
                     // User dismissed scanner
                 }
                 .addOnFailureListener { e ->
-                    Log.w("AddServerDialog", "Google Code Scanner failure, opening gallery fallback", e)
+                    DebugLogger.w("AddServerDialog", "Google Code Scanner failure, opening gallery fallback", e)
                     Toast.makeText(context, "Google Scanner недоступен. Выберите скриншот из галереи", Toast.LENGTH_SHORT).show()
                     galleryQrPickerLauncher.launch("image/*")
                 }
         } catch (e: Exception) {
-            Log.e("AddServerDialog", "Scanner initialization error", e)
+            DebugLogger.e("AddServerDialog", "Scanner initialization error", e)
             galleryQrPickerLauncher.launch("image/*")
         }
     }

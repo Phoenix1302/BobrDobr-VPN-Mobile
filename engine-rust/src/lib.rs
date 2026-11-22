@@ -22,6 +22,11 @@ use tunnel::TunnelHandle;
 
 static ACTIVE_TUNNEL: Mutex<Option<TunnelHandle>> = Mutex::new(None);
 
+#[no_mangle]
+pub extern "C" fn set_logging_enabled(enabled: bool) {
+    android_log::set_logging_enabled(enabled);
+}
+
 /// Starts the VPN tunnel using the provided TUN file descriptor and JSON configuration.
 ///
 /// # Safety

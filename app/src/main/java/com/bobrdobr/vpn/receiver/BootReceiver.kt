@@ -1,10 +1,12 @@
 package com.bobrdobr.vpn.receiver
 
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
-import android.util.Log
 import com.bobrdobr.vpn.repository.ServerRepository
 import com.bobrdobr.vpn.routing.TunnelConfigAssembler
 import com.bobrdobr.vpn.subscription.SubscriptionManager
@@ -41,18 +43,18 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        Log.i(TAG, "Received boot event: $action")
+        DebugLogger.i(TAG, "Received boot event: $action")
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val isAutoConnectEnabled = prefs.getBoolean(KEY_AUTO_CONNECT, false)
 
         if (!isAutoConnectEnabled) {
-            Log.d(TAG, "Auto-connect is disabled in settings. Skipping boot startup.")
+            DebugLogger.d(TAG, "Auto-connect is disabled in settings. Skipping boot startup.")
             return
         }
 
         // Check if VPN permission has been granted
         if (VpnService.prepare(context) != null) {
-            Log.w(TAG, "VpnService permission not granted or revoked. Cannot auto-connect on boot.")
+            DebugLogger.w(TAG, "VpnService permission not granted or revoked. Cannot auto-connect on boot.")
             return
         }
 
@@ -72,13 +74,13 @@ class BootReceiver : BroadcastReceiver() {
                     }
 
                     if (targetServer == null) {
-                        Log.w(TAG, "No server profile configured. Cannot auto-connect on boot.")
+                        DebugLogger.w(TAG, "No server profile configured. Cannot auto-connect on boot.")
                         return@withTimeout
                     }
 
                     // If target server is from subscription, verify that subscription is active and allowed to connect
                     if (targetServer.isFromSubscription && !subManager.subscriptionInfo.value.currentStatus.canConnect) {
-                        Log.w(TAG, "Subscription is expired or blocked. Auto-connect blocked.")
+                        DebugLogger.w(TAG, "Subscription is expired or blocked. Auto-connect blocked.")
                         return@withTimeout
                     }
 
@@ -94,13 +96,13 @@ class BootReceiver : BroadcastReceiver() {
                         fallbackDnsSelection = selectedDns
                     )
 
-                    Log.i(TAG, "Auto-connecting to server '${targetServer.name}' on boot...")
+                    DebugLogger.i(TAG, "Auto-connecting to server '${targetServer.name}' on boot...")
                     VpnTunnelService.start(context, config)
                 }
             } catch (e: TimeoutCancellationException) {
-                Log.e(TAG, "Auto-connect on boot timed out after 15 seconds")
+                DebugLogger.e(TAG, "Auto-connect on boot timed out after 15 seconds")
             } catch (t: Throwable) {
-                Log.e(TAG, "Failed to auto-connect on boot: ${t.message}", t)
+                DebugLogger.e(TAG, "Failed to auto-connect on boot: ${t.message}", t)
             } finally {
                 pendingResult.finish()
             }

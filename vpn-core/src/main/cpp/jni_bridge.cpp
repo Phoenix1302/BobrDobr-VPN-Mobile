@@ -20,13 +20,15 @@
 #include <mutex>
 #include <unordered_map>
 #include <cstring>
+#include <atomic>
 #include "include/engine_api.h"
 
 #define LOG_TAG "BobrDobr_JNI"
-#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+static std::atomic_bool g_logging_enabled{true};
+#define LOGD(...) do { if (g_logging_enabled.load()) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__); } while (0)
+#define LOGI(...) do { if (g_logging_enabled.load()) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__); } while (0)
+#define LOGW(...) do { if (g_logging_enabled.load()) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__); } while (0)
+#define LOGE(...) do { if (g_logging_enabled.load()) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__); } while (0)
 
 namespace {
 
@@ -42,6 +44,7 @@ typedef int (*fn_start_tunnel_v2)(int, const char*, protect_callback_fn, status_
 typedef int (*fn_stop_tunnel)(void);
 typedef int (*fn_update_network)(int64_t);
 typedef int (*fn_get_tunnel_stats)(tunnel_stats_t*);
+typedef void (*fn_set_logging_enabled)(bool);
 
 struct EngineTable {
     void* handle = nullptr;
@@ -50,6 +53,7 @@ struct EngineTable {
     fn_stop_tunnel stop_tunnel = nullptr;
     fn_update_network update_network = nullptr;
     fn_get_tunnel_stats get_tunnel_stats = nullptr;
+    fn_set_logging_enabled set_logging_enabled = nullptr;
 };
 
 // Global cache for loaded engine libraries (Handles are NEVER dlclose'd to prevent Go runtime SIGSEGV)
@@ -311,6 +315,9 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeInitEngine(
     auto it = g_engine_cache.find(libNameStr);
     if (it != g_engine_cache.end()) {
         g_active_engine = it->second;
+        if (g_active_engine.set_logging_enabled) {
+            g_active_engine.set_logging_enabled(g_logging_enabled.load());
+        }
         LOGI("Native engine '%s' restored from cache (handle=%p)", libNameStr.c_str(), g_active_engine.handle);
         return ENGINE_SUCCESS;
     }
@@ -332,6 +339,7 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeInitEngine(
     table.stop_tunnel = reinterpret_cast<fn_stop_tunnel>(dlsym(handle, "stop_tunnel"));
     table.update_network = reinterpret_cast<fn_update_network>(dlsym(handle, "update_network"));
     table.get_tunnel_stats = reinterpret_cast<fn_get_tunnel_stats>(dlsym(handle, "get_tunnel_stats"));
+    table.set_logging_enabled = reinterpret_cast<fn_set_logging_enabled>(dlsym(handle, "set_logging_enabled"));
 
     if ((!table.start_tunnel && !table.start_tunnel_v2) ||
         !table.stop_tunnel || !table.update_network || !table.get_tunnel_stats) {
@@ -344,6 +352,9 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeInitEngine(
 
     g_engine_cache[libNameStr] = table;
     g_active_engine = table;
+    if (g_active_engine.set_logging_enabled) {
+        g_active_engine.set_logging_enabled(g_logging_enabled.load());
+    }
     LOGI("Native engine '%s' loaded and cached successfully (has_start_v2=%d)",
          libNameStr.c_str(), table.start_tunnel_v2 != nullptr);
     return ENGINE_SUCCESS;
@@ -536,6 +547,20 @@ Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeGetTunnelStats(
     );
 
     return statsObj;
+}
+
+JNIEXPORT void JNICALL
+Java_org_bobrdobr_vpn_core_engine_JniBridge_nativeSetLoggingEnabled(
+        JNIEnv* env,
+        jclass clazz,
+        jboolean enabled) {
+    (void)env;
+    (void)clazz;
+    g_logging_enabled.store(enabled == JNI_TRUE);
+    std::lock_guard<std::mutex> lock(g_engine_mutex);
+    if (g_active_engine.set_logging_enabled) {
+        g_active_engine.set_logging_enabled(enabled == JNI_TRUE);
+    }
 }
 
 } // extern "C"

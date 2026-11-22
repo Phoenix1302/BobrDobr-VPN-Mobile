@@ -1,5 +1,8 @@
 package com.bobrdobr.vpn.config
 
+import org.bobrdobr.vpn.core.logger.DebugLogger
+
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -8,7 +11,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Base64
-import android.util.Log
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.RGBLuminanceSource
@@ -91,7 +93,7 @@ object QrConfigDecoder {
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error parsing JSON QR payload", e)
+                DebugLogger.w(TAG, "Error parsing JSON QR payload", e)
             }
         }
 
@@ -149,7 +151,7 @@ object QrConfigDecoder {
                 val text = result.text ?: return null
                 decodeRawText(text) ?: text
             } catch (fallbackEx: Exception) {
-                Log.w(TAG, "ZXing could not decode QR code from bitmap", fallbackEx)
+                DebugLogger.w(TAG, "ZXing could not decode QR code from bitmap", fallbackEx)
                 null
             }
         }
@@ -173,7 +175,7 @@ object QrConfigDecoder {
                     BitmapFactory.decodeStream(stream)
                 }
             } catch (ex: Exception) {
-                Log.e(TAG, "Failed to load bitmap from uri: $uri", ex)
+                DebugLogger.e(TAG, "Failed to load bitmap from uri: $uri", ex)
                 null
             }
         }

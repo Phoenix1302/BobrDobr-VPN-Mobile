@@ -861,3 +861,8 @@ func get_tunnel_stats(stats *C.tunnel_stats_t) C.int {
 }
 
 func main() {}
+
+//export set_logging_enabled
+func set_logging_enabled(enabled C.bool) {
+	base.SetLoggingEnabled(bool(enabled))
+}
